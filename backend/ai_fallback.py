@@ -13,6 +13,18 @@ log = logging.getLogger("docuforge.ai")
 TIMEOUT = float(os.getenv("AI_TIMEOUT_SECONDS", "30"))
 
 
+def _post_with_retry(url: str, headers: dict, payload: dict) -> Optional[requests.Response]:
+    for attempt in range(2):
+        try:
+            return requests.post(url, headers=headers, json=payload, timeout=TIMEOUT)
+        except requests.RequestException as exc:
+            if attempt == 1:
+                log.warning("Request failed after retry for %s: %s", url, exc)
+                return None
+            log.warning("Request failed for %s, retrying once: %s", url, exc)
+    return None
+
+
 def _system_prompt(rules: str, chunk_index: int, total_chunks: int) -> str:
     chunk_note = (
         f"This is chunk {chunk_index} of {total_chunks}; format only this part consistently."
@@ -24,6 +36,8 @@ def _system_prompt(rules: str, chunk_index: int, total_chunks: int) -> str:
         "Transform the user's raw content into a well-structured academic report section "
         "following the formatting rules. Use clear hierarchical headings prefixed with "
         "'# ', '## ', '### ' (Markdown style). Use blank lines between paragraphs. "
+        "Use coherent academic flow and, when appropriate, include Introduction, Body, "
+        "and Conclusion sections in this chunk without inventing facts. "
         "Do not invent facts. Preserve the user's information.\n\n"
         f"FORMATTING RULES:\n{rules or '(none provided — use standard academic structure)'}\n\n"
         f"{chunk_note}"
@@ -38,20 +52,22 @@ def _try_groq(title: str, rules: str, content: str, ci: int, tc: int) -> Optiona
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": _system_prompt(rules, ci, tc)},
+            {"role": "user", "content": _user_prompt(title, content)},
+        ],
+        "temperature": 0.3,
+    }
+    r = _post_with_retry(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        payload=payload,
+    )
+    if r is None:
+        return None
     try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": [
-                    {"role": "system", "content": _system_prompt(rules, ci, tc)},
-                    {"role": "user", "content": _user_prompt(title, content)},
-                ],
-                "temperature": 0.3,
-            },
-            timeout=TIMEOUT,
-        )
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
         log.warning("Groq returned %s: %s", r.status_code, r.text[:300])
@@ -64,25 +80,27 @@ def _try_openrouter(title: str, rules: str, content: str, ci: int, tc: int) -> O
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
         return None
+    payload = {
+        "model": "meta-llama/llama-3.1-8b-instruct:free",
+        "messages": [
+            {"role": "system", "content": _system_prompt(rules, ci, tc)},
+            {"role": "user", "content": _user_prompt(title, content)},
+        ],
+        "temperature": 0.3,
+    }
+    r = _post_with_retry(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://docuforge.ai",
+            "X-Title": "DocuForge AI",
+        },
+        payload=payload,
+    )
+    if r is None:
+        return None
     try:
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://docuforge.ai",
-                "X-Title": "DocuForge AI",
-            },
-            json={
-                "model": "meta-llama/llama-3.1-8b-instruct:free",
-                "messages": [
-                    {"role": "system", "content": _system_prompt(rules, ci, tc)},
-                    {"role": "user", "content": _user_prompt(title, content)},
-                ],
-                "temperature": 0.3,
-            },
-            timeout=TIMEOUT,
-        )
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
         log.warning("OpenRouter returned %s: %s", r.status_code, r.text[:300])
@@ -95,18 +113,20 @@ def _try_cohere(title: str, rules: str, content: str, ci: int, tc: int) -> Optio
     key = os.getenv("COHERE_API_KEY")
     if not key:
         return None
+    payload = {
+        "model": "command-r",
+        "preamble": _system_prompt(rules, ci, tc),
+        "message": _user_prompt(title, content),
+        "temperature": 0.3,
+    }
+    r = _post_with_retry(
+        "https://api.cohere.com/v1/chat",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        payload=payload,
+    )
+    if r is None:
+        return None
     try:
-        r = requests.post(
-            "https://api.cohere.com/v1/chat",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "model": "command-r",
-                "preamble": _system_prompt(rules, ci, tc),
-                "message": _user_prompt(title, content),
-                "temperature": 0.3,
-            },
-            timeout=TIMEOUT,
-        )
         if r.status_code == 200:
             data = r.json()
             return (data.get("text") or "").strip() or None

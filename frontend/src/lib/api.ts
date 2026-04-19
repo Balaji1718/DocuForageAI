@@ -6,9 +6,12 @@ const LS_KEY = "docuforge.apiBaseUrl";
 
 export function getApiBaseUrl(): string {
   const stored = typeof window !== "undefined" ? window.localStorage.getItem(LS_KEY) : null;
+  const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
+  const sameOrigin = typeof window !== "undefined" ? window.location.origin : null;
   return (
     stored ||
-    (import.meta as any).env?.VITE_API_BASE_URL ||
+    envBase ||
+    sameOrigin ||
     "http://localhost:8000"
   );
 }

@@ -9,23 +9,19 @@ Endpoints:
 from __future__ import annotations
 
 import os
-import re
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
 
 import firebase_admin
-from firebase_admin import auth as fb_auth, credentials, firestore
+from firebase_admin import credentials, firestore
 
-from ai_fallback import generate_with_fallback
-from doc_generator import build_docx, build_pdf
+from routes.report_routes import create_report_router
+from utils.auth import verify_token
 
 load_dotenv()
 
@@ -65,169 +61,60 @@ app.add_middleware(
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", Path(__file__).parent / "outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+FRONTEND_DIST_DIR = Path(
+    os.getenv("FRONTEND_DIST_DIR", Path(__file__).resolve().parent.parent / "dist")
+)
+FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
+
 MAX_CONTENT_CHARS = int(os.getenv("MAX_CONTENT_CHARS", "200000"))  # 200k hard limit
 
-
-# ---- Auth dependency ---------------------------------------------------------
-def verify_token(authorization: Optional[str] = Header(None)) -> dict:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1].strip()
-    try:
-        decoded = fb_auth.verify_id_token(token)
-        return decoded
-    except Exception as e:  # pragma: no cover
-        log.warning("Token verification failed: %s", e)
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-# ---- Models ------------------------------------------------------------------
-class GenerateRequest(BaseModel):
-    userId: str = Field(..., min_length=1)
-    title: str = Field(..., min_length=1, max_length=300)
-    rules: str = Field(default="", max_length=10_000)
-    content: str = Field(..., min_length=1)
-
-
-# ---- Helpers -----------------------------------------------------------------
-def _safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:120]
-
-
-def _chunk(text: str, size: int = 8000) -> list[str]:
-    return [text[i : i + size] for i in range(0, len(text), size)]
-
-
-# ---- Routes ------------------------------------------------------------------
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
-
-
-@app.get("/files/{filename}")
-def get_file(filename: str):
-    safe = _safe_filename(filename)
-    path = OUTPUT_DIR / safe
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    media = (
-        "application/pdf"
-        if path.suffix.lower() == ".pdf"
-        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-    return FileResponse(path, media_type=media, filename=safe)
-
-
-@app.get("/reports/{user_id}")
-def list_reports(user_id: str, user=Depends(verify_token)):
-    if user.get("uid") != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    docs = (
-        db.collection("reports")
-        .where("userId", "==", user_id)
-        .stream()
-    )
-    items: list[dict[str, Any]] = []
-    for d in docs:
-        data = d.to_dict() or {}
-        data["id"] = d.id
-        # Convert Firestore timestamps to ISO strings for JSON
-        for k in ("createdAt", "updatedAt"):
-            v = data.get(k)
-            if hasattr(v, "isoformat"):
-                data[k] = v.isoformat()
-        items.append(data)
-    items.sort(key=lambda x: str(x.get("createdAt") or ""), reverse=True)
-    return {"reports": items}
-
-
-@app.post("/generate")
-def generate(req: GenerateRequest, user=Depends(verify_token)):
-    if user.get("uid") != req.userId:
-        raise HTTPException(status_code=403, detail="userId does not match authenticated user")
-
-    if len(req.content) > MAX_CONTENT_CHARS:
+def _frontend_index_or_404() -> FileResponse:
+    if not FRONTEND_INDEX_FILE.exists():
         raise HTTPException(
-            status_code=413,
-            detail=f"Content too large; max {MAX_CONTENT_CHARS} characters.",
+            status_code=404,
+            detail=(
+                "Frontend build not found. Run 'npm run build' in the frontend folder "
+                "or set FRONTEND_DIST_DIR."
+            ),
         )
+    return FileResponse(FRONTEND_INDEX_FILE)
 
-    # 1) Create report doc with status=pending
-    report_ref = db.collection("reports").document()
-    report_id = report_ref.id
-    report_ref.set(
-        {
-            "userId": req.userId,
-            "title": req.title,
-            "rules": req.rules,
-            "content": req.content,
-            "status": "pending",
-            "pdfUrl": "",
-            "docxUrl": "",
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-        }
+
+app.include_router(
+    create_report_router(
+        db=db,
+        output_dir=OUTPUT_DIR,
+        max_content_chars=MAX_CONTENT_CHARS,
+        verify_token=verify_token,
     )
+)
 
-    try:
-        # 2) Move to processing
-        report_ref.update({"status": "processing", "updatedAt": firestore.SERVER_TIMESTAMP})
 
-        # 3) AI step (with chunking for large content) + fallback
-        chunks = _chunk(req.content, 8000)
-        structured_sections: list[str] = []
-        for idx, chunk in enumerate(chunks, start=1):
-            section = generate_with_fallback(
-                title=req.title,
-                rules=req.rules,
-                content=chunk,
-                chunk_index=idx,
-                total_chunks=len(chunks),
-            )
-            structured_sections.append(section)
-        structured_text = "\n\n".join(structured_sections)
-
-        # 4) Generate files
-        docx_path = OUTPUT_DIR / f"{report_id}.docx"
-        pdf_path = OUTPUT_DIR / f"{report_id}.pdf"
-        build_docx(req.title, req.rules, structured_text, docx_path)
-        build_pdf(req.title, req.rules, structured_text, pdf_path)
-
-        pdf_url = f"/files/{report_id}.pdf"
-        docx_url = f"/files/{report_id}.docx"
-
-        # 5) Mark completed
-        report_ref.update(
-            {
-                "status": "completed",
-                "pdfUrl": pdf_url,
-                "docxUrl": docx_url,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }
-        )
-        return {
-            "status": "completed",
-            "reportId": report_id,
-            "pdfUrl": pdf_url,
-            "docxUrl": docx_url,
-        }
-
-    except Exception as e:  # noqa: BLE001
-        log.exception("Generation failed: %s", e)
-        report_ref.update(
-            {
-                "status": "failed",
-                "error": str(e),
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"status": "failed", "reportId": report_id, "error": str(e)},
-        )
+@app.get("/", include_in_schema=False)
+def frontend_root():
+    return _frontend_index_or_404()
 
 
 @app.exception_handler(Exception)
 async def unhandled(_: Request, exc: Exception):  # pragma: no cover
     log.exception("Unhandled error: %s", exc)
     return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def frontend_fallback(full_path: str):
+    # Prevent catch-all from masking API/docs endpoints when a route truly does not exist.
+    reserved_prefixes = ("generate", "reports", "files", "health", "docs", "redoc", "openapi.json")
+    if full_path == "" or full_path.startswith(reserved_prefixes):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    candidate = (FRONTEND_DIST_DIR / full_path).resolve()
+    try:
+        candidate.relative_to(FRONTEND_DIST_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if candidate.exists() and candidate.is_file():
+        return FileResponse(candidate)
+
+    return _frontend_index_or_404()

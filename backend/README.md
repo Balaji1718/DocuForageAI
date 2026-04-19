@@ -30,6 +30,31 @@ export ALLOWED_ORIGINS="https://your-frontend.example.com"
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+## Run Frontend + Backend On One Server
+
+Build the frontend from `frontend/` first:
+
+```bash
+cd ../frontend
+npm install
+npm run build
+```
+
+Then start FastAPI from `backend/`:
+
+```bash
+cd backend
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+FastAPI will serve:
+- API endpoints on the same host (for example `/generate`, `/reports/{userId}`)
+- frontend static files from `../dist`
+- SPA routes via fallback to `dist/index.html`
+
+Optional:
+- set `FRONTEND_DIST_DIR` if your built frontend path is not `../dist`
+
 ## Endpoints
 
 | Method | Path                | Description                              |
