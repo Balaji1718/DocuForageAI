@@ -22,6 +22,16 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 export COHERE_API_KEY="..."
 # Optional CORS (comma-separated). Defaults to "*".
 export ALLOWED_ORIGINS="https://your-frontend.example.com"
+# Optional: enable OCR for image/scanned-PDF inputs (requires local tesseract runtime).
+export OCR_ENABLED="true"
+# Optional: run a final coherence pass when input is chunked.
+export ENABLE_LARGE_CONTENT_REFINEMENT="true"
+```
+
+Optional OCR extras (not required for normal backend startup):
+
+```bash
+pip install pillow pytesseract
 ```
 
 ## Run

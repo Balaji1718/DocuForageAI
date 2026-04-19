@@ -32,6 +32,16 @@ export interface GenerateRequest {
   title: string;
   rules: string;
   content: string;
+  referenceContent?: string;
+  referenceMimeType?: string;
+  inputFiles?: InputFilePayload[];
+}
+
+export interface InputFilePayload {
+  filename: string;
+  mimeType: string;
+  contentBase64: string;
+  role?: "content" | "reference";
 }
 
 export interface GenerateResponse {

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, Inches
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -21,7 +23,7 @@ from reportlab.platypus import (
 
 
 def _parse_blocks(text: str) -> list[tuple[str, str]]:
-    """Return list of (kind, text) where kind ∈ {h1, h2, h3, li, p}."""
+    """Return list of (kind, text) where kind ∈ {h1, h2, h3, li, oli, p}."""
     blocks: list[tuple[str, str]] = []
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -36,6 +38,8 @@ def _parse_blocks(text: str) -> list[tuple[str, str]]:
             blocks.append(("h3", line[4:].strip()))
         elif re.match(r"^[-*•]\s+", line):
             blocks.append(("li", re.sub(r"^[-*•]\s+", "", line).strip()))
+        elif re.match(r"^\d+[.)]\s+", line):
+            blocks.append(("oli", re.sub(r"^\d+[.)]\s+", "", line).strip()))
         else:
             blocks.append(("p", line.strip()))
     # collapse paragraph runs
@@ -55,8 +59,57 @@ def _parse_blocks(text: str) -> list[tuple[str, str]]:
     return merged
 
 
+def _extract_layout_hints(layout_plan: dict[str, Any] | None, compiled_rules: dict[str, Any] | None) -> dict[str, Any]:
+    compiled = compiled_rules or {}
+    typography = compiled.get("typography") or {}
+    layout = compiled.get("layout") or {}
+    plan = layout_plan or {}
+    hard_constraints = plan.get("hardConstraintsApplied") or []
+
+    line_spacing = typography.get("line_spacing") or "single"
+    alignment = typography.get("alignment") or "justified"
+    if any(str(item).startswith("line_spacing:") for item in hard_constraints):
+        for item in hard_constraints:
+            if str(item).startswith("line_spacing:"):
+                line_spacing = str(item).split(":", 1)[1] or line_spacing
+                break
+
+    return {
+        "line_spacing": line_spacing,
+        "alignment": alignment,
+        "heading_numbering": bool(layout.get("heading_numbering")),
+        "max_heading_depth": int(layout.get("max_heading_depth") or 3),
+        "allow_page_breaks": bool(plan.get("placements")),
+        "placements": plan.get("placements") or [],
+    }
+
+
+class _SectionNumberer:
+    def __init__(self) -> None:
+        self._counts = [0, 0, 0]
+
+    def format(self, level: int, title: str) -> str:
+        clean = title.strip()
+        if re.match(r"^\d+(?:\.\d+)*\s+", clean):
+            return clean
+        idx = max(1, min(level, 3)) - 1
+        self._counts[idx] += 1
+        for tail in range(idx + 1, len(self._counts)):
+            self._counts[tail] = 0
+        parts = [str(n) for n in self._counts[: idx + 1] if n > 0]
+        return f"{'.'.join(parts)} {clean}" if parts else clean
+
+
 # ---------------------------- DOCX -------------------------------------------
-def build_docx(title: str, rules: str, structured_text: str, out_path: Path) -> None:
+def build_docx(
+    title: str,
+    rules: str,
+    structured_text: str,
+    out_path: Path,
+    layout_plan: dict[str, Any] | None = None,
+    compiled_rules: dict[str, Any] | None = None,
+) -> None:
+    hints = _extract_layout_hints(layout_plan, compiled_rules)
     doc = Document()
     for section in doc.sections:
         section.top_margin = Inches(1)
@@ -65,8 +118,15 @@ def build_docx(title: str, rules: str, structured_text: str, out_path: Path) -> 
         section.right_margin = Inches(1)
 
     style = doc.styles["Normal"]
-    style.font.name = "Calibri"
+    style.font.name = "Times New Roman"
     style.font.size = Pt(11)
+
+    if hints["line_spacing"] == "double":
+        style.paragraph_format.line_spacing = 2.0
+    elif hints["line_spacing"] == "1.5":
+        style.paragraph_format.line_spacing = 1.5
+    else:
+        style.paragraph_format.line_spacing = 1.2
 
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -83,18 +143,35 @@ def build_docx(title: str, rules: str, structured_text: str, out_path: Path) -> 
     doc.add_paragraph()
 
     blocks = _parse_blocks(structured_text)
-    for kind, val in blocks:
+    placements = hints["placements"]
+    numberer = _SectionNumberer()
+    current_page = None
+    for index, (kind, val) in enumerate(blocks):
+        placement = placements[index] if index < len(placements) else None
+        page = int(placement.get("page") or 1) if placement else 1
+        if current_page is None:
+            current_page = page
+        elif hints["allow_page_breaks"] and page > current_page:
+            doc.add_page_break()
+            current_page = page
+
         if kind == "h1":
-            doc.add_heading(val, level=1)
+            heading = doc.add_heading(numberer.format(1, val), level=1)
+            if hints["heading_numbering"]:
+                heading.style = doc.styles["Heading 1"]
         elif kind == "h2":
-            doc.add_heading(val, level=2)
+            doc.add_heading(numberer.format(2, val), level=2)
         elif kind == "h3":
-            doc.add_heading(val, level=3)
+            doc.add_heading(numberer.format(3, val), level=3)
         elif kind == "li":
             doc.add_paragraph(val, style="List Bullet")
+        elif kind == "oli":
+            doc.add_paragraph(val, style="List Number")
         else:
             p = doc.add_paragraph(val)
-            p.paragraph_format.space_after = Pt(6)
+            p.paragraph_format.space_after = Pt(8)
+            p.paragraph_format.line_spacing = 2.0 if hints["line_spacing"] == "double" else 1.5 if hints["line_spacing"] == "1.5" else 1.2
+            p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY if hints["alignment"] == "justified" else WD_ALIGN_PARAGRAPH.LEFT
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
@@ -105,30 +182,33 @@ def _styles():
     base = getSampleStyleSheet()
     return {
         "title": ParagraphStyle(
-            "Title", parent=base["Title"], fontSize=22, leading=26, spaceAfter=6
+            "Title", parent=base["Title"], fontSize=22, leading=26, spaceAfter=6, alignment=TA_CENTER
         ),
         "subtitle": ParagraphStyle(
             "Subtitle",
             parent=base["Normal"],
             fontSize=10,
             textColor="#666666",
-            alignment=1,
+            alignment=TA_CENTER,
             spaceAfter=18,
         ),
         "h1": ParagraphStyle(
-            "H1", parent=base["Heading1"], fontSize=18, leading=22, spaceBefore=14, spaceAfter=8
+            "H1", parent=base["Heading1"], fontSize=17, leading=22, spaceBefore=14, spaceAfter=8
         ),
         "h2": ParagraphStyle(
-            "H2", parent=base["Heading2"], fontSize=14, leading=18, spaceBefore=10, spaceAfter=6
+            "H2", parent=base["Heading2"], fontSize=13.5, leading=18, spaceBefore=10, spaceAfter=6
         ),
         "h3": ParagraphStyle(
             "H3", parent=base["Heading3"], fontSize=12, leading=16, spaceBefore=8, spaceAfter=4
         ),
         "p": ParagraphStyle(
-            "Body", parent=base["BodyText"], fontSize=11, leading=15, spaceAfter=6
+            "Body", parent=base["BodyText"], fontSize=11, leading=16, spaceAfter=7, alignment=TA_JUSTIFY
         ),
         "li": ParagraphStyle(
             "Li", parent=base["BodyText"], fontSize=11, leading=15, leftIndent=14
+        ),
+        "oli": ParagraphStyle(
+            "OLi", parent=base["BodyText"], fontSize=11, leading=15, leftIndent=14
         ),
     }
 
@@ -141,7 +221,15 @@ def _escape(text: str) -> str:
     )
 
 
-def build_pdf(title: str, rules: str, structured_text: str, out_path: Path) -> None:
+def build_pdf(
+    title: str,
+    rules: str,
+    structured_text: str,
+    out_path: Path,
+    layout_plan: dict[str, Any] | None = None,
+    compiled_rules: dict[str, Any] | None = None,
+) -> None:
+    hints = _extract_layout_hints(layout_plan, compiled_rules)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc = SimpleDocTemplate(
         str(out_path),
@@ -160,7 +248,11 @@ def build_pdf(title: str, rules: str, structured_text: str, out_path: Path) -> N
     ]
 
     blocks = _parse_blocks(structured_text)
+    placements = hints["placements"]
     pending_list: list[ListItem] = []
+    pending_olist: list[ListItem] = []
+    numberer = _SectionNumberer()
+    current_page = None
 
     def flush_list():
         nonlocal pending_list
@@ -169,19 +261,43 @@ def build_pdf(title: str, rules: str, structured_text: str, out_path: Path) -> N
             flow.append(Spacer(1, 6))
             pending_list = []
 
-    for kind, val in blocks:
+    def flush_olist():
+        nonlocal pending_olist
+        if pending_olist:
+            flow.append(ListFlowable(pending_olist, bulletType="1", leftIndent=18))
+            flow.append(Spacer(1, 6))
+            pending_olist = []
+
+    for index, (kind, val) in enumerate(blocks):
+        placement = placements[index] if index < len(placements) else None
+        page = int(placement.get("page") or 1) if placement else 1
+        if current_page is None:
+            current_page = page
+        elif hints["allow_page_breaks"] and page > current_page:
+            flush_list()
+            flush_olist()
+            flow.append(PageBreak())
+            current_page = page
+
         if kind == "li":
+            flush_olist()
             pending_list.append(ListItem(Paragraph(_escape(val), s["li"])))
             continue
+        if kind == "oli":
+            flush_list()
+            pending_olist.append(ListItem(Paragraph(_escape(val), s["oli"])))
+            continue
         flush_list()
+        flush_olist()
         if kind == "h1":
-            flow.append(Paragraph(_escape(val), s["h1"]))
+            flow.append(Paragraph(_escape(numberer.format(1, val)), s["h1"]))
         elif kind == "h2":
-            flow.append(Paragraph(_escape(val), s["h2"]))
+            flow.append(Paragraph(_escape(numberer.format(2, val)), s["h2"]))
         elif kind == "h3":
-            flow.append(Paragraph(_escape(val), s["h3"]))
+            flow.append(Paragraph(_escape(numberer.format(3, val)), s["h3"]))
         else:
             flow.append(Paragraph(_escape(val), s["p"]))
     flush_list()
+    flush_olist()
 
     doc.build(flow)

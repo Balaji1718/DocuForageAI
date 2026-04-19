@@ -10,18 +10,40 @@ from fastapi.responses import FileResponse, JSONResponse
 from firebase_admin import firestore
 from pydantic import BaseModel, Field
 
-from services.ai_service import generate_structured_text
-from services.doc_service import generate_documents
+from services.orchestration_service import run_generation_pipeline
 from utils.helpers import safe_filename
 
 log = logging.getLogger("docuforge.routes")
+
+
+def _public_error_message(detail: str, quality_failure: bool) -> str:
+    if detail.startswith("INPUT_VALIDATION:"):
+        return detail.replace("INPUT_VALIDATION:", "", 1).strip()
+    if detail.startswith("RENDER_VALIDATION:"):
+        return "Generated output did not meet render fidelity requirements."
+    if quality_failure:
+        return "Generated output did not meet quality requirements after retry."
+    return "Generation failed due to a temporary processing issue. Please try again."
+
+
+def _error_code(detail: str, quality_failure: bool) -> str:
+    if detail.startswith("INPUT_VALIDATION:"):
+        return "input_validation"
+    if detail.startswith("RENDER_VALIDATION:"):
+        return "render_validation"
+    if quality_failure:
+        return "quality_validation"
+    return "processing_failure"
 
 
 class GenerateRequest(BaseModel):
     userId: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1, max_length=300)
     rules: str = Field(default="", max_length=10_000)
-    content: str = Field(..., min_length=1)
+    referenceContent: str = Field(default="", max_length=100_000)
+    referenceMimeType: str = Field(default="text/plain", max_length=200)
+    content: str = Field(default="", max_length=200_000)
+    inputFiles: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def create_report_router(
@@ -89,7 +111,18 @@ def create_report_router(
                 "userId": req.userId,
                 "title": req.title,
                 "rules": req.rules,
+                "referenceContent": req.referenceContent,
+                "referenceMimeType": req.referenceMimeType,
                 "content": req.content,
+                "inputFiles": [
+                    {
+                        "filename": str(item.get("filename") or "unnamed")[:260],
+                        "mimeType": str(item.get("mimeType") or "application/octet-stream")[:200],
+                        "role": str(item.get("role") or "content")[:20],
+                    }
+                    for item in req.inputFiles
+                ],
+                "inputProcessing": {"processed": 0, "failed": 0, "files": []},
                 "status": "pending",
                 "pdfUrl": "",
                 "docxUrl": "",
@@ -101,49 +134,91 @@ def create_report_router(
         try:
             report_ref.update({"status": "processing", "updatedAt": firestore.SERVER_TIMESTAMP})
 
-            structured_text = generate_structured_text(
-                title=req.title,
-                rules=req.rules,
-                content=req.content,
-                chunk_size=8000,
-                retries=1,
-            )
-
-            pdf_url, docx_url = generate_documents(
+            pipeline = run_generation_pipeline(
                 report_id=report_id,
                 title=req.title,
                 rules=req.rules,
-                structured_text=structured_text,
+                content=req.content,
+                reference_content=req.referenceContent,
+                reference_mime_type=req.referenceMimeType,
+                input_files=req.inputFiles,
+                max_content_chars=max_content_chars,
                 output_dir=output_dir,
             )
 
             report_ref.update(
                 {
+                    "content": pipeline["mergedContent"],
+                    "inputProcessing": pipeline["inputProcessing"],
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                }
+            )
+
+            report_ref.update(
+                {
+                    "parsedRules": pipeline["parsedRules"],
+                    "parsedReference": pipeline["parsedReference"],
+                    "documentModel": pipeline.get("documentModel", {}),
+                    "layoutPlan": pipeline.get("layoutPlan", {}),
+                    "preRenderSimulation": pipeline.get("preRenderSimulation", {}),
+                    "layoutCorrections": pipeline.get("layoutCorrections", []),
+                    "renderValidation": pipeline.get("renderValidation", {}),
+                    "structuredFeedback": pipeline.get("structuredFeedback", {}),
+                    "validation": pipeline["validation"],
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                }
+            )
+
+            report_ref.update(
+                {
                     "status": "completed",
-                    "pdfUrl": pdf_url,
-                    "docxUrl": docx_url,
+                    "pdfUrl": pipeline["pdfUrl"],
+                    "docxUrl": pipeline["docxUrl"],
                     "updatedAt": firestore.SERVER_TIMESTAMP,
                 }
             )
             return {
                 "status": "completed",
                 "reportId": report_id,
-                "pdfUrl": pdf_url,
-                "docxUrl": docx_url,
+                "pdfUrl": pipeline["pdfUrl"],
+                "docxUrl": pipeline["docxUrl"],
             }
 
         except Exception as exc:  # noqa: BLE001
             log.exception("Generation failed for report %s: %s", report_id, exc)
+            detail = str(exc)
+            if detail.startswith("INPUT_VALIDATION:"):
+                status_code = 400
+            else:
+                status_code = 500
+            quality_failure = "Output quality validation failed after one retry" in detail or detail.startswith("RENDER_VALIDATION:")
+            error_text = _public_error_message(detail, quality_failure)
+            error_code = _error_code(detail, quality_failure)
+            quality_errors: list[str] = []
+            if quality_failure:
+                parts = detail.split(":", 1)
+                if len(parts) == 2:
+                    quality_errors = [p.strip() for p in parts[1].split(";") if p.strip()]
             report_ref.update(
                 {
                     "status": "failed",
-                    "error": str(exc),
+                    "error": error_text,
+                    "errorCode": error_code,
+                    "qualityFailure": quality_failure,
+                    "qualityErrors": quality_errors,
                     "updatedAt": firestore.SERVER_TIMESTAMP,
                 }
             )
             return JSONResponse(
-                status_code=500,
-                content={"status": "failed", "reportId": report_id, "error": str(exc)},
+                status_code=status_code,
+                content={
+                    "status": "failed",
+                    "reportId": report_id,
+                    "error": error_text,
+                    "errorCode": error_code,
+                    "qualityFailure": quality_failure,
+                    "qualityErrors": quality_errors,
+                },
             )
 
     return router

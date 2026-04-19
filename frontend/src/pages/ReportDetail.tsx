@@ -62,6 +62,26 @@ export default function ReportDetail() {
         <Card className="mb-6 border-destructive/40 bg-destructive/10">
           <CardContent className="p-4 text-sm text-destructive">
             <strong>Generation failed:</strong> {report.error}
+            {report.qualityFailure && (report.qualityErrors?.length || 0) > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-xs">
+                {report.qualityErrors?.map((item, idx) => (
+                  <li key={`${idx}-${item}`}>{item}</li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {(report.status === "pending" || report.status === "processing") && (
+        <Card className="mb-6 border-info/30 bg-info/10">
+          <CardContent className="p-4 text-sm text-info">
+            <strong>Status:</strong> {report.status === "pending" ? "Queued" : "Processing"}
+            {report.inputProcessing && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Files processed: {report.inputProcessing.processed ?? 0}, failed: {report.inputProcessing.failed ?? 0}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -106,6 +126,16 @@ export default function ReportDetail() {
             <p className="whitespace-pre-wrap text-sm">{report.rules}</p>
           </CardContent>
         </Card>
+        {report.validation && (
+          <Card className="gradient-card border-border/60">
+            <CardContent className="p-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quality Checks</h3>
+              <p className="text-sm text-muted-foreground">
+                Score: {report.validation.qualityScore ?? "-"} | Retried: {report.validation.retried ? "yes" : "no"}
+              </p>
+            </CardContent>
+          </Card>
+        )}
         <Card className="gradient-card border-border/60">
           <CardContent className="p-5">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Content</h3>

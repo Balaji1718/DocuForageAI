@@ -26,6 +26,20 @@ export interface Report {
   pdfUrl?: string;
   docxUrl?: string;
   error?: string;
+  errorCode?: string;
+  qualityFailure?: boolean;
+  qualityErrors?: string[];
+  validation?: {
+    ok?: boolean;
+    qualityScore?: number;
+    retried?: boolean;
+    errors?: string[];
+    warnings?: string[];
+  };
+  inputProcessing?: {
+    processed?: number;
+    failed?: number;
+  };
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }

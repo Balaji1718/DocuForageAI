@@ -13,6 +13,20 @@ import { generateReport } from "@/lib/api";
 import { ArrowLeft, Sparkles } from "lucide-react";
 
 const MAX_CONTENT = 100_000; // 100k chars guard
+const MAX_FILE_BYTES = 3_000_000;
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : "";
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function CreateReport() {
   const { user } = useAuth();
@@ -22,6 +36,9 @@ export default function CreateReport() {
     "Use a formal academic tone. Include sections: Abstract, Introduction, Methodology, Results, Discussion, Conclusion, References. Use numbered headings."
   );
   const [content, setContent] = useState("");
+  const [referenceContent, setReferenceContent] = useState("");
+  const [contentFiles, setContentFiles] = useState<File[]>([]);
+  const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
@@ -35,14 +52,57 @@ export default function CreateReport() {
       });
       return;
     }
+
+    const allFiles = [...contentFiles, ...referenceFiles];
+    const oversized = allFiles.find((f) => f.size > MAX_FILE_BYTES);
+    if (oversized) {
+      toast({
+        title: "File too large",
+        description: `${oversized.name} exceeds ${Math.floor(MAX_FILE_BYTES / 1_000_000)}MB limit.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setBusy(true);
     let reportId = "";
     try {
-      reportId = await createReport({ userId: user.uid, title, rules, content });
+      reportId = await createReport({
+        userId: user.uid,
+        title,
+        rules,
+        content,
+      });
       navigate(`/reports/${reportId}`);
+
+      const contentFilePayloads = await Promise.all(
+        contentFiles.map(async (file) => ({
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          contentBase64: await fileToBase64(file),
+          role: "content" as const,
+        }))
+      );
+      const referenceFilePayloads = await Promise.all(
+        referenceFiles.map(async (file) => ({
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          contentBase64: await fileToBase64(file),
+          role: "reference" as const,
+        }))
+      );
+
       // Fire backend job (best-effort). Backend also updates Firestore status.
       try {
-        await generateReport({ userId: user.uid, title, rules, content });
+        await generateReport({
+          userId: user.uid,
+          title,
+          rules,
+          content,
+          referenceContent,
+          referenceMimeType: "text/plain",
+          inputFiles: [...contentFilePayloads, ...referenceFilePayloads],
+        });
       } catch (err: any) {
         await updateReport(reportId, { status: "failed", error: err?.message ?? "Backend unreachable" });
         toast({
@@ -98,6 +158,44 @@ export default function CreateReport() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="reference">Optional Reference Content</Label>
+              <Textarea
+                id="reference"
+                rows={5}
+                value={referenceContent}
+                onChange={(e) => setReferenceContent(e.target.value)}
+                placeholder="Optional: paste a sample structure you want to mimic (organization only, not wording)."
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="contentFiles">Content Files (optional)</Label>
+                <Input
+                  id="contentFiles"
+                  type="file"
+                  multiple
+                  accept="*/*"
+                  onChange={(e) => setContentFiles(Array.from(e.target.files || []))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Accepted: text, JSON, CSV, DOCX, PDF, images, and other files. Unsupported binary files are kept as metadata.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="referenceFiles">Reference Files (optional)</Label>
+                <Input
+                  id="referenceFiles"
+                  type="file"
+                  multiple
+                  accept="*/*"
+                  onChange={(e) => setReferenceFiles(Array.from(e.target.files || []))}
+                />
+                <p className="text-xs text-muted-foreground">Use this to align output structure with sample documents.</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="content">Content</Label>
                 <span className={`text-xs ${content.length > MAX_CONTENT ? "text-destructive" : "text-muted-foreground"}`}>
@@ -106,7 +204,6 @@ export default function CreateReport() {
               </div>
               <Textarea
                 id="content"
-                required
                 rows={14}
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
