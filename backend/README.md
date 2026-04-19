@@ -1,0 +1,47 @@
+# DocuForge AI — FastAPI Backend
+
+Rule-driven document compilation service. Generates DOCX (`python-docx`) and PDF (`reportlab`) from user content + formatting rules, with a multi-AI fallback (Groq → OpenRouter → Cohere → rule-based).
+
+## Setup
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Place your Firebase service-account JSON next to `main.py` as `serviceAccount.json`
+(or set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json`).
+
+Get it from: Firebase Console → Project settings → Service accounts → Generate new private key.
+
+Set environment variables (or use a `.env` file):
+
+```bash
+export GROQ_API_KEY="gsk_..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
+export COHERE_API_KEY="..."
+# Optional CORS (comma-separated). Defaults to "*".
+export ALLOWED_ORIGINS="https://your-frontend.example.com"
+```
+
+## Run
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+## Endpoints
+
+| Method | Path                | Description                              |
+|--------|---------------------|------------------------------------------|
+| POST   | `/generate`         | Generate report (requires `Authorization: Bearer <Firebase ID token>`) |
+| GET    | `/reports/{userId}` | List user reports (auth required)        |
+| GET    | `/files/{filename}` | Download generated PDF/DOCX              |
+| GET    | `/health`           | Liveness check                           |
+
+## Deploy
+
+Works on any Python host (Render, Fly.io, Railway, Google Cloud Run, a VPS).
+Persist the `outputs/` directory if you want files to survive restarts.
+
+After deploying, open the DocuForge AI frontend → Settings → set the Backend URL to your deployed URL.
