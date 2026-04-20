@@ -169,6 +169,7 @@ def compile_rules(parsed_rules: dict[str, Any]) -> dict[str, Any]:
         "layout": layout,
         "content_constraints": {
             "target_length_words": int(structural.get("target_length_words") or 500),
+            "target_length_pages": int(structural.get("target_length_pages") or 0),
             "require_bullets": bool(formatting.get("require_bullets")),
             "include_references": bool(structural.get("include_references")),
         },
@@ -209,6 +210,7 @@ def build_compiled_rules_guidance(compiled_rules: dict[str, Any]) -> str:
         f"- Images allowed: {'yes' if layout.get('allow_images') else 'no'}",
         "Content constraints:",
         f"- Target length words: {content.get('target_length_words', 500)}",
+        f"- Target length pages: {content.get('target_length_pages', 0) or 'auto'}",
         f"- Use bullets: {'yes' if content.get('require_bullets') else 'no'}",
         f"- Include references: {'yes' if content.get('include_references') else 'no'}",
     ]

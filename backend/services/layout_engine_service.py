@@ -139,6 +139,7 @@ def solve_layout(document_model: dict[str, Any], compiled_rules: dict[str, Any] 
     compiled = compiled_rules or {}
     typography = compiled.get("typography") or {}
     layout_cfg = compiled.get("layout") or {}
+    content_constraints = compiled.get("content_constraints") or {}
 
     blocks = document_model.get("blocks") or []
     content_blocks = [b for b in blocks if b.get("type") != "document"]
@@ -148,6 +149,17 @@ def solve_layout(document_model: dict[str, Any], compiled_rules: dict[str, Any] 
         page_capacity_lines = 30
     elif typography.get("line_spacing") == "1.5":
         page_capacity_lines = 38
+
+    target_pages = int(content_constraints.get("target_length_pages") or 0)
+    if target_pages > 0:
+        total_estimated_lines = 0
+        for block in [b for b in blocks if b.get("type") != "document"]:
+            total_estimated_lines += _estimated_lines_for_block(block)
+
+        if total_estimated_lines > 0:
+            tuned_capacity = math.ceil(total_estimated_lines / max(1, target_pages))
+            # Keep sane bounds so we do not produce unrealistic pagination.
+            page_capacity_lines = max(20, min(60, tuned_capacity))
 
     placements: list[dict[str, Any]] = []
     page = 1
@@ -176,6 +188,8 @@ def solve_layout(document_model: dict[str, Any], compiled_rules: dict[str, Any] 
         f"alignment:{typography.get('alignment', 'justified')}",
         f"max_heading_depth:{layout_cfg.get('max_heading_depth', 3)}",
     ]
+    if target_pages > 0:
+        hard_constraints.append(f"target_pages:{target_pages}")
     soft_constraints = [
         "keep_captions_with_content",
         "preserve_image_aspect_ratio",

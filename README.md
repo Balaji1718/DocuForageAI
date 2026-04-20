@@ -9,6 +9,19 @@ DocuForge AI is a full-stack report generation system with:
 
 ## Run (Single Server Mode)
 
+Preferred one-command startup (Windows PowerShell):
+
+```powershell
+./run-single-server.ps1 -Port 8006
+```
+
+This command:
+- builds the frontend into `dist/`
+- installs backend requirements
+- starts FastAPI, serving both API and frontend from one server
+
+Manual mode:
+
 1. Build frontend from `frontend/`:
 
 ```bash

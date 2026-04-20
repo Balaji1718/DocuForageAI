@@ -8,6 +8,20 @@ import StatusBadge from "@/components/StatusBadge";
 import { listReports, Report } from "@/lib/reports";
 import { FileText, Plus, RefreshCw } from "lucide-react";
 
+function reportSecondaryState(report: Report): string {
+  if (report.status === "processing" && report.correctionBackoffTriggered) {
+    return "Correction retries stopped (backoff triggered)";
+  }
+  if (report.qualityFailure) {
+    return "Quality validation failed";
+  }
+  const score = report.validation?.qualityScore ?? report.renderValidation?.score;
+  if (typeof score === "number") {
+    return `Quality score: ${score}`;
+  }
+  return "";
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [reports, setReports] = useState<Report[]>([]);
@@ -92,6 +106,9 @@ export default function Dashboard() {
                     <p className="mt-1 truncate text-xs text-muted-foreground">
                       {r.createdAt?.toDate?.().toLocaleString?.() ?? "Just now"}
                     </p>
+                    {reportSecondaryState(r) && (
+                      <p className="mt-1 truncate text-xs text-amber-400">{reportSecondaryState(r)}</p>
+                    )}
                   </div>
                   <StatusBadge status={r.status} />
                 </CardContent>

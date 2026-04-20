@@ -118,6 +118,13 @@ def _extract_required_sections(headings: list[dict[str, Any]], rules_text: str) 
 def _extract_structural_requirements(rules_text: str, headings: list[dict[str, Any]]) -> dict[str, Any]:
     lower = rules_text.lower()
     max_heading_depth = max([int(h.get("level") or 1) for h in headings], default=3)
+    page_match = re.search(r"(?:up\s*to|max(?:imum)?|around|about)?\s*(\d{1,3})\s*pages?", lower)
+    target_pages = int(page_match.group(1)) if page_match else 0
+    target_words = 1500 if "long" in lower else 800 if "medium" in lower else 500
+    if target_pages > 0:
+        # Use an academic average of ~300 words/page to calibrate long-form generation.
+        target_words = max(target_words, target_pages * 300)
+
     return {
         "require_intro_body_conclusion": all(
             keyword in lower for keyword in ("introduction", "body", "conclusion")
@@ -127,7 +134,8 @@ def _extract_structural_requirements(rules_text: str, headings: list[dict[str, A
         "prefer_images": "image" in lower or "figure" in lower,
         "max_heading_depth": max_heading_depth,
         "include_references": "references" in lower or "bibliography" in lower,
-        "target_length_words": 1500 if "long" in lower else 800 if "medium" in lower else 500,
+        "target_length_words": target_words,
+        "target_length_pages": target_pages,
     }
 
 

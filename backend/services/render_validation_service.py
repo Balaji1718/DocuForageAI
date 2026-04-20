@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+import os
 from pathlib import Path
 import re
 from typing import Any
 
 from docx import Document
 from PIL import Image
+
+
+def _active_validation_profile() -> str:
+    return os.getenv("RENDER_VALIDATION_PROFILE", "strict").strip().lower()
 
 
 def _normalize_text(text: str) -> str:
@@ -330,6 +335,70 @@ def _build_suggestions(issues: list[str], rule_violations: list[dict[str, Any]])
     return suggestions[:6]
 
 
+def _long_document_profile(
+    *,
+    expected_pages: int,
+    compiled_rules: dict[str, Any] | None,
+) -> dict[str, Any]:
+    target_pages = int(((compiled_rules or {}).get("content_constraints") or {}).get("target_length_pages") or 0)
+    long_form = expected_pages >= 30 or target_pages >= 30
+    very_long_form = expected_pages >= 60 or target_pages >= 60
+
+    return {
+        "enabled": long_form,
+        "veryLong": very_long_form,
+        "targetPages": target_pages,
+    }
+
+
+def _page_count_tolerance(expected_pages: int, profile: dict[str, Any], validation_profile: str) -> int:
+    if expected_pages <= 0:
+        return 0
+    if (validation_profile or "").strip().lower() == "high_range":
+        return max(3, round(expected_pages * 0.75))
+    if profile.get("veryLong"):
+        return max(8, round(expected_pages * 0.2))
+    if profile.get("enabled"):
+        return max(4, round(expected_pages * 0.15))
+    return 0
+
+
+def _profile_thresholds(profile_name: str) -> dict[str, Any]:
+    """Resolve default thresholds by profile.
+
+    strict: existing production-grade validation behavior.
+    balanced: moderate tolerance for real-world variation.
+    high_range: broad acceptance range for long/variable academic drafts.
+    """
+    profile = (profile_name or "strict").strip().lower()
+    if profile == "high_range":
+        return {
+            "minSimilarity": 82.0,
+            "minHeadingMatchRatio": 0.6,
+            "minVisualSimilarity": 20.0,
+            "minVisualSimilarityPerPage": 20.0,
+            "maxFailedPageRatio": 0.85,
+            "enforceVisualHardGate": False,
+        }
+    if profile == "balanced":
+        return {
+            "minSimilarity": 85.0,
+            "minHeadingMatchRatio": 0.68,
+            "minVisualSimilarity": 35.0,
+            "minVisualSimilarityPerPage": 35.0,
+            "maxFailedPageRatio": 0.5,
+            "enforceVisualHardGate": True,
+        }
+    return {
+        "minSimilarity": 88.0,
+        "minHeadingMatchRatio": 0.75,
+        "minVisualSimilarity": 68.0,
+        "minVisualSimilarityPerPage": 65.0,
+        "maxFailedPageRatio": 0.0,
+        "enforceVisualHardGate": True,
+    }
+
+
 def validate_rendered_artifacts(
     *,
     structured_text: str,
@@ -357,29 +426,48 @@ def validate_rendered_artifacts(
         if any(heading in rendered for rendered in rendered_headings):
             heading_matches += 1
 
+    validation_profile = _active_validation_profile()
     expected_pages = int(layout_plan.get("totalPages") or 0) if layout_plan else 0
-    page_count_match = expected_pages == 0 or pdf_pages == expected_pages
+    long_doc_profile = _long_document_profile(expected_pages=expected_pages, compiled_rules=compiled_rules)
+    page_tolerance = _page_count_tolerance(expected_pages, long_doc_profile, validation_profile)
+    page_count_match = expected_pages == 0 or abs(pdf_pages - expected_pages) <= page_tolerance
     paragraph_count_match = True
     if layout_plan and layout_plan.get("placements"):
         paragraph_count_match = len(layout_plan.get("placements") or []) <= max(docx_blocks, 1) + 4
 
-    acceptance_thresholds = {
-        "minSimilarity": 88.0,
-        "minHeadingMatchRatio": 0.75,
-        "minVisualSimilarity": 68.0,
-        "minVisualSimilarityPerPage": 65.0,
-    }
+    acceptance_thresholds = _profile_thresholds(validation_profile)
+
+    if long_doc_profile.get("enabled"):
+        acceptance_thresholds.update(
+            {
+                "minSimilarity": 84.0,
+                "minHeadingMatchRatio": 0.7,
+                "minVisualSimilarity": 40.0,
+                "minVisualSimilarityPerPage": 45.0,
+                "maxFailedPageRatio": 0.5,
+                "enforceVisualHardGate": False,
+            }
+        )
+
     if compiled_rules and compiled_rules.get("render_thresholds"):
         acceptance_thresholds.update(compiled_rules["render_thresholds"])
 
     heading_ratio = 1.0 if not expected_headings else round(heading_matches / len(expected_headings), 2)
-    has_failed_pages = bool(visual_comparison.get("failedPages", []))
+    total_visual_pages = max(1, len(visual_comparison.get("pageScores") or []))
+    failed_pages_count = len(visual_comparison.get("failedPages", []))
+    has_failed_pages = failed_pages_count > 0
+    failed_ratio = round(failed_pages_count / total_visual_pages, 3)
+    allowed_failed_ratio = float(acceptance_thresholds.get("maxFailedPageRatio") or 0.0)
+    visual_gate_required = bool(acceptance_thresholds.get("enforceVisualHardGate", True))
     rule_eval = _render_rule_penalties(structured_text, compiled_rules)
     accepted = (
         aggregate_similarity >= float(acceptance_thresholds["minSimilarity"])
         and heading_ratio >= float(acceptance_thresholds["minHeadingMatchRatio"])
-        and visual_comparison.get("averageScore", 0.0) >= float(acceptance_thresholds["minVisualSimilarity"])
-        and not has_failed_pages
+        and (
+            visual_comparison.get("averageScore", 0.0) >= float(acceptance_thresholds["minVisualSimilarity"])
+            or not visual_gate_required
+        )
+        and (not has_failed_pages or failed_ratio <= allowed_failed_ratio or not visual_gate_required)
         and page_count_match
         and paragraph_count_match
         and len(rule_eval.get("violations") or []) == 0
@@ -396,7 +484,10 @@ def validate_rendered_artifacts(
     if visual_comparison.get("averageScore", 0.0) < float(acceptance_thresholds["minVisualSimilarity"]):
         issues.extend(visual_comparison.get("issues") or ["Visual similarity below threshold."])
     if not page_count_match:
-        issues.append(f"PDF page count mismatch: expected {expected_pages}, got {pdf_pages}")
+        if page_tolerance > 0:
+            issues.append(f"PDF page count mismatch: expected {expected_pages}, got {pdf_pages} (tolerance {page_tolerance})")
+        else:
+            issues.append(f"PDF page count mismatch: expected {expected_pages}, got {pdf_pages}")
     if not paragraph_count_match:
         issues.append("Rendered block count diverged from the layout plan")
     if rule_eval.get("violations"):
@@ -430,6 +521,9 @@ def validate_rendered_artifacts(
             "headingMismatch": heading_ratio < float(acceptance_thresholds["minHeadingMatchRatio"]),
             "similarityMismatch": aggregate_similarity < float(acceptance_thresholds["minSimilarity"]),
             "visualMismatch": visual_comparison.get("averageScore", 0.0) < float(acceptance_thresholds["minVisualSimilarity"]),
+            "longDocumentProfile": bool(long_doc_profile.get("enabled")),
+            "validationProfile": validation_profile,
+            "failedPageRatio": failed_ratio,
         },
         "componentScores": {
             "structureScore": structure_score,
@@ -457,6 +551,8 @@ def validate_rendered_artifacts(
             "docxParagraphs": docx_blocks,
             "pdfPages": pdf_pages,
             "expectedPages": expected_pages,
+            "pageTolerance": page_tolerance,
+            "failedPageRatio": failed_ratio,
         },
         "structuredFeedback": {
             "score": score,

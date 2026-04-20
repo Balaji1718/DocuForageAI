@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
+import { getApiBaseUrl } from "@/lib/api";
 import { ArrowLeft, UserRound, Mail, ShieldCheck, Fingerprint, CalendarDays } from "lucide-react";
 
 export default function Settings() {
@@ -20,6 +21,7 @@ export default function Settings() {
     const value = user?.metadata?.lastSignInTime;
     return value ? new Date(value).toLocaleString() : "Unknown";
   }, [user?.metadata?.lastSignInTime]);
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
 
   return (
     <AppShell>
@@ -103,6 +105,16 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mt-4 gradient-card border-border/60">
+        <CardContent className="space-y-2 p-6">
+          <div className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Connection</div>
+          <p className="text-sm text-muted-foreground">Active backend endpoint</p>
+          <div className="rounded-lg border border-border/60 bg-background/30 p-3 font-mono text-xs break-all">
+            {apiBaseUrl}
+          </div>
+        </CardContent>
+      </Card>
     </AppShell>
   );
 }

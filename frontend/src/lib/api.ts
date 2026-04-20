@@ -1,33 +1,41 @@
 // API client for the DocuForge AI FastAPI backend.
-// Configure backend URL via VITE_API_BASE_URL or the in-app settings (localStorage).
+// Configure backend URL via VITE_API_BASE_URL.
 import { auth } from "./firebase";
 
-const LS_KEY = "docuforge.apiBaseUrl";
+function isLikelyBackendOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname.toLowerCase();
+    const port = parsed.port;
 
-export function getApiBaseUrl(): string {
-  const stored = typeof window !== "undefined" ? window.localStorage.getItem(LS_KEY) : null;
-  const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
-  const sameOrigin = typeof window !== "undefined" ? window.location.origin : null;
-  const sameOriginIsBackend =
-    typeof window !== "undefined" &&
-    (() => {
-      try {
-        const parsed = new URL(window.location.origin);
-        return parsed.port === "8000" || parsed.pathname === "/";
-      } catch {
-        return false;
-      }
-    })();
-  return (
-    stored ||
-    envBase ||
-    (sameOriginIsBackend ? sameOrigin : null) ||
-    "http://localhost:8000"
-  );
+    // Local development: backend is commonly run on 8000 or 8006.
+    if (host === "localhost" || host === "127.0.0.1") {
+      return port === "8000" || port === "8006";
+    }
+
+    // In deployed environments (80/443 or custom domain), same-origin backend is valid.
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function setApiBaseUrl(url: string) {
-  window.localStorage.setItem(LS_KEY, url.replace(/\/$/, ""));
+export function getApiBaseUrl(): string {
+  const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
+  const sameOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const sameOriginIsBackend =
+    typeof window !== "undefined" &&
+    isLikelyBackendOrigin(window.location.origin);
+
+  if (envBase) {
+    return String(envBase).replace(/\/$/, "");
+  }
+
+  if (sameOriginIsBackend && sameOrigin) {
+    return sameOrigin;
+  }
+
+  return "http://localhost:8000";
 }
 
 async function authHeader(): Promise<Record<string, string>> {
