@@ -1,54 +1,108 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { getApiBaseUrl, setApiBaseUrl } from "@/lib/api";
-import { toast } from "@/hooks/use-toast";
-import { ArrowLeft } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { ArrowLeft, UserRound, Mail, ShieldCheck, Fingerprint, CalendarDays } from "lucide-react";
 
 export default function Settings() {
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const [url, setUrl] = useState(getApiBaseUrl());
-
-  const save = (e: React.FormEvent) => {
-    e.preventDefault();
-    setApiBaseUrl(url);
-    toast({ title: "Saved", description: "Backend URL updated." });
-  };
+  const displayName = user?.displayName || user?.email?.split("@")[0] || "Profile";
+  const email = user?.email || "No email available";
+  const provider = user?.providerData?.[0]?.providerId || "firebase";
+  const createdAt = useMemo(() => {
+    const value = user?.metadata?.creationTime;
+    return value ? new Date(value).toLocaleString() : "Unknown";
+  }, [user?.metadata?.creationTime]);
+  const lastLogin = useMemo(() => {
+    const value = user?.metadata?.lastSignInTime;
+    return value ? new Date(value).toLocaleString() : "Unknown";
+  }, [user?.metadata?.lastSignInTime]);
 
   return (
     <AppShell>
       <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mb-4">
         <ArrowLeft className="mr-2 h-4 w-4" /> Back
       </Button>
-      <h1 className="mb-2 text-2xl font-bold tracking-tight sm:text-3xl">Settings</h1>
-      <p className="mb-6 text-sm text-muted-foreground">
-        Configure the FastAPI backend URL used for report generation and file downloads.
-      </p>
-      <Card className="gradient-card border-border/60">
-        <CardContent className="p-6">
-          <form onSubmit={save} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="api">Backend URL</Label>
-              <Input
-                id="api"
-                type="url"
-                required
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://your-backend.example.com"
-              />
-              <p className="text-xs text-muted-foreground">
-                Default: <code>http://localhost:8000</code>. The backend code is included in the project's <code>backend/</code> folder.
-              </p>
+      <div className="mb-6 flex items-center gap-3">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-primary shadow-glow">
+          <UserRound className="h-6 w-6 text-primary-foreground" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Profile</h1>
+          <p className="text-sm text-muted-foreground">View the signed-in account that powers your reports and downloads.</p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="gradient-card border-border/60">
+          <CardContent className="space-y-4 p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                <UserRound className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Account</div>
+                <div className="text-lg font-semibold">{displayName}</div>
+              </div>
             </div>
-            <Button type="submit" className="gradient-primary text-primary-foreground">Save</Button>
-          </form>
-        </CardContent>
-      </Card>
+
+            <div className="grid gap-3 text-sm">
+              <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/30 p-3">
+                <Mail className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Email</div>
+                  <div className="font-medium">{email}</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/30 p-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Provider</div>
+                  <div className="font-medium">{provider}</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/30 p-3">
+                <Fingerprint className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">User ID</div>
+                  <div className="break-all font-mono text-xs font-medium">{user?.uid || "Unknown"}</div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="gradient-card border-border/60">
+          <CardContent className="space-y-4 p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/15 text-accent-foreground">
+                <CalendarDays className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Activity</div>
+                <div className="text-lg font-semibold">Session details</div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 text-sm">
+              <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Account created</div>
+                <div className="font-medium">{createdAt}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Last sign-in</div>
+                <div className="font-medium">{lastLogin}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-background/30 p-3 text-muted-foreground">
+                This screen now focuses on the profile tied to your Firebase session instead of backend connection settings.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </AppShell>
   );
 }

@@ -1,0 +1,24 @@
+services:
+  generation-v2-real-render-test:
+    image: python:3.11-slim
+    working_dir: /workspace/backend
+    environment:
+      RUN_REAL_RENDER_TESTS: "1"
+      LO_RENDERER_IMAGE: "docuforage-lo-renderer:test"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ..:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint:
+      - /bin/bash
+      - -lc
+    command: >-
+      set -euo pipefail;
+      apt-get update;
+      apt-get install -y --no-install-recommends docker.io;
+      python -m pip install --upgrade pip;
+      pip install -r requirements.txt;
+      docker build -t docuforage-lo-renderer:test services/generation_v2/docker/libreoffice-renderer;
+      pytest -q tests/test_generation_v2_real_renderer.py

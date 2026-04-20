@@ -80,3 +80,24 @@ Works on any Python host (Render, Fly.io, Railway, Google Cloud Run, a VPS).
 Persist the `outputs/` directory if you want files to survive restarts.
 
 After deploying, open the DocuForge AI frontend → Settings → set the Backend URL to your deployed URL.
+
+## Generation V2 Production Gates
+
+Run the real Docker + LibreOffice self-compare check:
+
+```bash
+docker compose -f docker-compose.generation-v2.yml run --rm generation-v2-real-render-test
+```
+
+This target builds the pinned LibreOffice renderer image and runs:
+- `tests/test_generation_v2_real_renderer.py`
+
+Template registry persistence rollout plan is tracked in:
+- `docs/template_registry_persistence_plan.md`
+
+Template registry backend selection:
+- `GENV2_TEMPLATE_REGISTRY_BACKEND=memory|postgres`
+- `GENV2_TEMPLATE_REGISTRY_DSN=postgresql://...` (or `DATABASE_URL`)
+
+CI production gates workflow:
+- `.github/workflows/generation-v2-production-gates.yml`

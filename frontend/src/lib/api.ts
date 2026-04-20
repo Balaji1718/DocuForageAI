@@ -8,10 +8,20 @@ export function getApiBaseUrl(): string {
   const stored = typeof window !== "undefined" ? window.localStorage.getItem(LS_KEY) : null;
   const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
   const sameOrigin = typeof window !== "undefined" ? window.location.origin : null;
+  const sameOriginIsBackend =
+    typeof window !== "undefined" &&
+    (() => {
+      try {
+        const parsed = new URL(window.location.origin);
+        return parsed.port === "8000" || parsed.pathname === "/";
+      } catch {
+        return false;
+      }
+    })();
   return (
     stored ||
     envBase ||
-    sameOrigin ||
+    (sameOriginIsBackend ? sameOrigin : null) ||
     "http://localhost:8000"
   );
 }

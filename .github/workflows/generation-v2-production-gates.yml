@@ -1,0 +1,73 @@
+name: Generation V2 Production Gates
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - .github/workflows/generation-v2-production-gates.yml
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - .github/workflows/generation-v2-production-gates.yml
+
+jobs:
+  generation-v2-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: genv2
+          POSTGRES_USER: genv2
+          POSTGRES_PASSWORD: genv2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genv2 -d genv2"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GENV2_TEMPLATE_REGISTRY_BACKEND: postgres
+      GENV2_TEMPLATE_REGISTRY_DSN: postgresql://genv2:genv2@localhost:5432/genv2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run generation_v2 regression suite
+        run: |
+          pytest -q tests/test_generation_v2_phase1.py tests/test_generation_v2_phase2.py tests/test_generation_v2_phase3.py tests/test_generation_v2_phase4.py tests/test_generation_v2_phase5.py tests/test_generation_v2_phase6.py tests/test_generation_v2_final_phase.py
+
+  generation-v2-real-render:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      RUN_REAL_RENDER_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Docker Compose config
+        run: docker compose -f docker-compose.generation-v2.yml config
+
+      - name: Run real renderer gate
+        run: docker compose -f docker-compose.generation-v2.yml run --rm generation-v2-real-render-test
