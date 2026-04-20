@@ -14,6 +14,16 @@ export default defineConfig(() => ({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-firebase": ["firebase/app", "firebase/auth", "firebase/firestore"],
+          "vendor-ui": ["lucide-react", "@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-toast"],
+          "vendor-query": ["@tanstack/react-query"],
+        },
+      },
+    },
   },
   plugins: [react()],
   resolve: {

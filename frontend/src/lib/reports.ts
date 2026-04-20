@@ -16,6 +16,48 @@ import { db } from "./firebase";
 
 export type ReportStatus = "pending" | "processing" | "completed" | "failed";
 
+export interface ComponentScores {
+  structureScore?: number;
+  formattingScore?: number;
+  ruleComplianceScore?: number;
+}
+
+export interface RuleViolation {
+  rule?: string;
+  message?: string;
+  severity?: "info" | "warning" | "error" | string;
+  penalty?: number;
+}
+
+export interface StructuredIssue {
+  code?: string;
+  message?: string;
+  section?: string;
+  severity?: "info" | "warning" | "error" | string;
+  penalty?: number;
+}
+
+export interface StructuredFeedback {
+  score?: number;
+  issues?: Array<string | StructuredIssue>;
+  suggestions?: string[];
+  weakSections?: string[];
+}
+
+export interface RuleCompliance {
+  score?: number;
+  violations?: RuleViolation[];
+}
+
+export interface CorrectionAttempt {
+  attempt?: number;
+  score?: number;
+  strategy?: string;
+  reason?: string;
+  issues?: string[];
+  [key: string]: unknown;
+}
+
 export interface Report {
   id: string;
   userId: string;
@@ -35,7 +77,26 @@ export interface Report {
     retried?: boolean;
     errors?: string[];
     warnings?: string[];
+    componentScores?: ComponentScores;
   };
+  structuredFeedback?: StructuredFeedback;
+  renderValidation?: {
+    ok?: boolean;
+    score?: number;
+    componentScores?: ComponentScores;
+    suggestions?: string[];
+    issues?: Array<string | StructuredIssue>;
+    ruleCompliance?: RuleCompliance;
+  };
+  componentScores?: ComponentScores;
+  ruleCompliance?: RuleCompliance;
+  correctionHistory?: CorrectionAttempt[];
+  correctionBackoffTriggered?: boolean;
+  validationScoreProgression?: number[];
+  parsedRules?: Record<string, unknown>;
+  documentModel?: Record<string, unknown>;
+  layoutPlan?: Record<string, unknown>;
+  layoutCorrections?: Array<Record<string, unknown>>;
   inputProcessing?: {
     processed?: number;
     failed?: number;

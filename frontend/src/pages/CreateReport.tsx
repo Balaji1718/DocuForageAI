@@ -8,8 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
-import { createReport, updateReport } from "@/lib/reports";
-import { generateReport } from "@/lib/api";
+import { ApiError, generateReport } from "@/lib/api";
 import { ArrowLeft, Sparkles } from "lucide-react";
 
 const MAX_CONTENT = 100_000; // 100k chars guard
@@ -65,16 +64,7 @@ export default function CreateReport() {
     }
 
     setBusy(true);
-    let reportId = "";
     try {
-      reportId = await createReport({
-        userId: user.uid,
-        title,
-        rules,
-        content,
-      });
-      navigate(`/reports/${reportId}`);
-
       const contentFilePayloads = await Promise.all(
         contentFiles.map(async (file) => ({
           filename: file.name,
@@ -92,27 +82,43 @@ export default function CreateReport() {
         }))
       );
 
-      // Fire backend job (best-effort). Backend also updates Firestore status.
-      try {
-        await generateReport({
-          userId: user.uid,
-          title,
-          rules,
-          content,
-          referenceContent,
-          referenceMimeType: "text/plain",
-          inputFiles: [...contentFilePayloads, ...referenceFilePayloads],
-        });
-      } catch (err: any) {
-        await updateReport(reportId, { status: "failed", error: err?.message ?? "Backend unreachable" });
+      const response = await generateReport({
+        userId: user.uid,
+        title,
+        rules,
+        content,
+        referenceContent,
+        referenceMimeType: "text/plain",
+        inputFiles: [...contentFilePayloads, ...referenceFilePayloads],
+      });
+
+      if (!response.reportId) {
+        throw new Error("Backend did not return a report ID.");
+      }
+
+      navigate(`/reports/${response.reportId}`);
+
+      if (response.status === "failed") {
         toast({
           title: "Backend error",
-          description: err?.message ?? "Could not reach the FastAPI backend.",
+          description: response.error ?? "Generation failed.",
           variant: "destructive",
         });
       }
     } catch (err: any) {
-      toast({ title: "Failed to create report", description: err?.message, variant: "destructive" });
+      const apiError = err instanceof ApiError ? err : null;
+      if (apiError?.reportId) {
+        navigate(`/reports/${apiError.reportId}`);
+      }
+
+      const qualityDetails = apiError?.qualityErrors?.length
+        ? ` ${apiError.qualityErrors.join("; ")}`
+        : "";
+      toast({
+        title: "Report generation failed",
+        description: `${err?.message ?? "Could not reach the backend."}${qualityDetails}`,
+        variant: "destructive",
+      });
     } finally {
       setBusy(false);
     }

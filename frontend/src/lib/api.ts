@@ -50,6 +50,30 @@ export interface GenerateResponse {
   pdfUrl?: string;
   docxUrl?: string;
   error?: string;
+  errorCode?: string;
+  qualityFailure?: boolean;
+  qualityErrors?: string[];
+  structuredFeedback?: {
+    score?: number;
+    issues?: Array<string | { message?: string; severity?: string }>;
+    suggestions?: string[];
+  };
+}
+
+export class ApiError extends Error {
+  reportId?: string;
+  errorCode?: string;
+  qualityFailure?: boolean;
+  qualityErrors?: string[];
+
+  constructor(message: string, data?: Partial<GenerateResponse>) {
+    super(message);
+    this.name = "ApiError";
+    this.reportId = data?.reportId;
+    this.errorCode = data?.errorCode;
+    this.qualityFailure = data?.qualityFailure;
+    this.qualityErrors = data?.qualityErrors;
+  }
 }
 
 export async function generateReport(payload: GenerateRequest): Promise<GenerateResponse> {
@@ -61,7 +85,7 @@ export async function generateReport(payload: GenerateRequest): Promise<Generate
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error || data?.detail || `Backend error ${res.status}`);
+    throw new ApiError(data?.error || data?.detail || `Backend error ${res.status}`, data);
   }
   return data;
 }
