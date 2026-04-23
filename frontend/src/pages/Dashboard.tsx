@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import StatusBadge from "@/components/StatusBadge";
 import { listReports, Report } from "@/lib/reports";
-import { FileText, Plus, RefreshCw, CheckCircle } from "lucide-react";
+import { deleteReportHistory } from "@/lib/api";
+import { toast } from "@/hooks/use-toast";
+import { FileText, Plus, RefreshCw, CheckCircle, Trash2 } from "lucide-react";
 
 function reportSecondaryState(report: Report): string {
   if (report.status === "processing" && report.correctionBackoffTriggered) {
@@ -26,6 +28,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -37,6 +40,36 @@ export default function Dashboard() {
       setLoading(false);
     }
   }, [user]);
+
+  const handleDeleteReport = useCallback(async (report: Report) => {
+    const title = report.title || "Untitled report";
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Delete "${title}" from report history? This removes the stored history and generated files.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setDeletingReportId(report.id);
+    try {
+      await deleteReportHistory(report.id);
+      setReports((current) => current.filter((item) => item.id !== report.id));
+      toast({
+        title: "Report removed",
+        description: `"${title}" was deleted from history.`,
+      });
+    } catch (err: unknown) {
+      toast({
+        title: "Delete failed",
+        description: err instanceof Error ? err.message : "Could not delete report history.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingReportId(null);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -96,10 +129,10 @@ export default function Dashboard() {
       ) : (
         <div className="grid gap-3">
           {reports.map((r) => (
-            <Link key={r.id} to={`/reports/${r.id}`}>
-              <Card className="transition hover:border-primary/40 hover:shadow-glow gradient-card border-border/60">
-                <CardContent className="flex items-center justify-between gap-4 p-4">
-                  <div className="min-w-0 flex-1">
+            <Card key={r.id} className="transition hover:border-primary/40 hover:shadow-glow gradient-card border-border/60">
+              <CardContent className="flex items-start justify-between gap-4 p-4">
+                <Link to={`/reports/${r.id}`} className="min-w-0 flex-1 text-left">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate font-semibold">{r.title || "Untitled report"}</h3>
                       {r.rulesId && (
@@ -113,16 +146,28 @@ export default function Dashboard() {
                       {r.createdAt?.toDate?.().toLocaleString?.() ?? "Just now"}
                     </p>
                     {r.rulesId && (
-                      <p className="mt-1 truncate text-xs text-green-600 font-mono">{r.rulesId.substring(0, 8)}...</p>
+                      <p className="mt-1 truncate text-xs font-mono text-green-600">{r.rulesId.substring(0, 8)}...</p>
                     )}
                     {reportSecondaryState(r) && (
                       <p className="mt-1 truncate text-xs text-amber-400">{reportSecondaryState(r)}</p>
                     )}
                   </div>
+                </Link>
+                <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
                   <StatusBadge status={r.status} />
-                </CardContent>
-              </Card>
-            </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => handleDeleteReport(r)}
+                    disabled={deletingReportId === r.id}
+                    aria-label={`Delete ${r.title || "report"}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

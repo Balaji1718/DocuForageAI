@@ -108,6 +108,12 @@ export interface GenerateResponse {
   };
 }
 
+export interface DeleteReportResponse {
+  status: "deleted";
+  reportId: string;
+  removedFiles?: string[];
+}
+
 export class ApiError extends Error {
   reportId?: string;
   errorCode?: string;
@@ -159,6 +165,19 @@ export async function extractRulesFromDocx(params: {
     throw new ApiError(data?.error || data?.detail || `Backend error ${res.status}`);
   }
   return data as ExtractRulesResponse;
+}
+
+export async function deleteReportHistory(reportId: string): Promise<DeleteReportResponse> {
+  const headers = await authHeader();
+  const res = await fetch(`${getApiBaseUrl()}/reports/${encodeURIComponent(reportId)}`, {
+    method: "DELETE",
+    headers,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(data?.error || data?.detail || `Backend error ${res.status}`);
+  }
+  return data as DeleteReportResponse;
 }
 
 export function fileUrl(path: string): string {

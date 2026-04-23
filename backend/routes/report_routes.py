@@ -90,6 +90,34 @@ def _error_code(detail: str, quality_failure: bool) -> str:
     return "processing_failure"
 
 
+def _report_artifact_path(output_dir: Path, value: Any) -> Path | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    filename = Path(raw.split("?", 1)[0]).name
+    if not filename:
+        return None
+    return output_dir / safe_filename(filename)
+
+
+def _delete_report_artifacts(output_dir: Path, report_data: dict[str, Any]) -> list[str]:
+    removed_files: list[str] = []
+    for key in ("pdfUrl", "docxUrl"):
+        artifact_path = _report_artifact_path(output_dir, report_data.get(key))
+        if artifact_path is None:
+            continue
+
+        try:
+            if artifact_path.exists():
+                artifact_path.unlink()
+                removed_files.append(artifact_path.name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Failed to delete report artifact %s: %s", artifact_path, exc)
+
+    return removed_files
+
+
 class GenerateRequest(BaseModel):
     userId: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1, max_length=300)
@@ -148,6 +176,28 @@ def create_report_router(
 
         items.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
         return {"reports": items}
+
+    @router.delete("/reports/{report_id}")
+    def delete_report(report_id: str, user=Depends(verify_token)):
+        log.info("Delete report request for report %s", report_id)
+
+        report_ref = db.collection("reports").document(report_id)
+        report_doc = report_ref.get()
+        if not getattr(report_doc, "exists", False):
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        report_data = report_doc.to_dict() or {}
+        if user.get("uid") != report_data.get("userId"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        removed_files = _delete_report_artifacts(output_dir, report_data)
+        report_ref.delete()
+
+        return {
+            "status": "deleted",
+            "reportId": report_id,
+            "removedFiles": removed_files,
+        }
 
     @router.post("/extract-rules")
     async def extract_document_rules(
