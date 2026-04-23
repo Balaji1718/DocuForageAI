@@ -35,6 +35,17 @@ function scoreDeltaClass(prev: number | undefined, current: number): string {
   return "bg-amber-500";
 }
 
+function formatMetadataLabel(key: string): string {
+  const cleaned = String(key || "").replace(/[_-]+/g, " ").trim();
+  if (!cleaned) {
+    return "Metadata";
+  }
+  return cleaned
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export default function ReportDetail() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
@@ -89,6 +100,53 @@ export default function ReportDetail() {
           <p className="mt-1 text-xs text-muted-foreground">
             Created {report.createdAt?.toDate?.().toLocaleString?.() ?? "—"}
           </p>
+          {report.rulesId ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700">
+                Extracted rules active
+              </Badge>
+              <span className="text-xs text-muted-foreground">rules_id: {report.rulesId}</span>
+            </div>
+          ) : (
+            <div className="mt-2">
+              <Badge variant="secondary" className="text-xs">Using default/typed rules only</Badge>
+            </div>
+          )}
+          {report.metadata && Object.entries(report.metadata).some(([, value]) => String(value || "").trim()) && (
+            <div className="mt-3 text-xs text-muted-foreground space-y-1">
+              {Object.entries(report.metadata)
+                .filter(([, value]) => String(value || "").trim())
+                .map(([key, value]) => (
+                  <div key={key}>
+                    <strong>{formatMetadataLabel(key)}:</strong> {value}
+                  </div>
+                ))}
+            </div>
+          )}
+          {report.sections && report.sections.length > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground">
+              <div className="font-medium mb-1">Sections ({report.sections.length}):</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {report.sections.map((section, idx) => (
+                  <li key={idx}>
+                    {section.title} {section.mode === "auto_generate" && <span className="text-emerald-600">[AI]</span>}
+                    {section.mode === "user_provides" && <span className="text-blue-600">[User]</span>}
+                    {section.mode === "skip" && <span className="text-gray-400">[Skip]</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {report.ruleOverrides && Object.keys(report.ruleOverrides).length > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground">
+              <div className="font-medium mb-1">Rule Overrides:</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {Object.entries(report.ruleOverrides).map(([key, value]) => (
+                  <li key={key}>{key}: {value}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
         <StatusBadge status={report.status} />
       </div>

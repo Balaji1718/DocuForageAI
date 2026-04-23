@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import StatusBadge from "@/components/StatusBadge";
 import { listReports, Report } from "@/lib/reports";
-import { FileText, Plus, RefreshCw } from "lucide-react";
+import { FileText, Plus, RefreshCw, CheckCircle } from "lucide-react";
 
 function reportSecondaryState(report: Report): string {
   if (report.status === "processing" && report.correctionBackoffTriggered) {
@@ -102,10 +102,19 @@ export default function Dashboard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate font-semibold">{r.title || "Untitled report"}</h3>
+                      {r.rulesId && (
+                        <div className="flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-1 text-xs font-medium text-green-600 whitespace-nowrap">
+                          <CheckCircle className="h-3 w-3" />
+                          Rules active
+                        </div>
+                      )}
                     </div>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
                       {r.createdAt?.toDate?.().toLocaleString?.() ?? "Just now"}
                     </p>
+                    {r.rulesId && (
+                      <p className="mt-1 truncate text-xs text-green-600 font-mono">{r.rulesId.substring(0, 8)}...</p>
+                    )}
                     {reportSecondaryState(r) && (
                       <p className="mt-1 truncate text-xs text-amber-400">{reportSecondaryState(r)}</p>
                     )}

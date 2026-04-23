@@ -63,6 +63,13 @@ export interface Report {
   userId: string;
   title: string;
   rules: string;
+  rulesId?: string;
+  metadata?: Record<string, string>;
+  sections?: Array<{
+    title: string;
+    mode: "auto_generate" | "user_provides" | "skip";
+  }>;
+  ruleOverrides?: Record<string, string | number>;
   content: string;
   status: ReportStatus;
   pdfUrl?: string;

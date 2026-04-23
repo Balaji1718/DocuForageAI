@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 PLACEHOLDER_SENTENCE = "Content for this required section was not explicitly generated."
+ARTIFACT_NUMBER_PATTERN = re.compile(r"(?<!\w)\d{6,9}(?!\w)")
 
 
 def _canonical_section_name(name: str) -> str:
@@ -11,23 +12,8 @@ def _canonical_section_name(name: str) -> str:
 
 
 def ensure_required_sections(text: str, required_sections: list[str]) -> str:
-    out = text.strip()
-
-    for section in required_sections:
-        canon = _canonical_section_name(section)
-        if not canon:
-            continue
-
-        # Check for markdown heading with this section title.
-        heading_pattern = re.compile(rf"^#{{1,3}}\s+{re.escape(canon)}\s*$", flags=re.IGNORECASE | re.MULTILINE)
-        if not heading_pattern.search(out):
-            out += (
-                f"\n\n## {canon}\n"
-                f"{PLACEHOLDER_SENTENCE} "
-                "This placeholder preserves the required structure."
-            )
-
-    return out
+    # Validation is detection-only; preserve the original content unchanged.
+    return text
 
 
 def _count_heading_lines(text: str) -> int:
@@ -63,6 +49,11 @@ def _extract_section_bodies(text: str) -> dict[str, str]:
 
 def _contains_bullets(text: str) -> bool:
     return bool(re.search(r"^\s*([-*]|\d+\.)\s+", text, flags=re.MULTILINE))
+
+
+def _detect_xml_artifact_numbers(text: str) -> tuple[bool, int]:
+    matches = ARTIFACT_NUMBER_PATTERN.findall(text)
+    return (len(matches) > 0, len(matches))
 
 
 def _rule_compliance_checks(text: str, compiled_rules: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -215,6 +206,7 @@ def validate_structured_output(
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
+    has_xml_artifact_numbers, xml_artifact_number_count = _detect_xml_artifact_numbers(text)
 
     if not text.strip():
         errors.append("Generated output is empty.")
@@ -293,6 +285,8 @@ def validate_structured_output(
         "enhancedScore": enhanced_score,
         "ruleViolations": rule_checks["violations"],
         "weakSections": weak_sections,
+        "has_xml_artifact_numbers": has_xml_artifact_numbers,
+        "xml_artifact_number_count": xml_artifact_number_count,
         "issues": errors + warnings,
         "suggestions": suggestions,
         "structuredFeedback": {
@@ -308,6 +302,5 @@ def enforce_and_validate(
     required_sections: list[str],
     compiled_rules: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    enforced = ensure_required_sections(text, required_sections)
-    report = validate_structured_output(enforced, required_sections, compiled_rules=compiled_rules)
-    return enforced, report
+    report = validate_structured_output(text, required_sections, compiled_rules=compiled_rules)
+    return text, report

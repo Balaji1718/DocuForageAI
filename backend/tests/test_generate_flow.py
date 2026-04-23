@@ -25,10 +25,16 @@ class FakeCollection:
     def __init__(self):
         self._docs = {}
 
-    def document(self):
-        doc_id = f"doc_{len(self._docs) + 1}"
-        doc = FakeDoc(doc_id)
-        self._docs[doc_id] = doc
+    def document(self, doc_id: str | None = None):
+        if doc_id:
+            doc = self._docs.get(doc_id)
+            if doc is None:
+                doc = FakeDoc(doc_id)
+                self._docs[doc_id] = doc
+            return doc
+        generated_id = f"doc_{len(self._docs) + 1}"
+        doc = FakeDoc(generated_id)
+        self._docs[generated_id] = doc
         return doc
 
     def where(self, *_args, **_kwargs):
@@ -143,6 +149,73 @@ def test_generate_mixed_input_content_and_reference(monkeypatch):
     body = res.json()
     assert body["status"] == "completed"
     assert body["reportId"]
+
+
+def test_generate_passes_sections_and_rule_overrides(monkeypatch):
+    app = FastAPI()
+    db = FakeDB()
+    out_dir = Path(__file__).parent / "_outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    captured: dict = {}
+
+    def _capture_pipeline(**kwargs):
+        captured.update(kwargs)
+        return {
+            "mergedContent": "merged",
+            "mergedReference": "",
+            "inputProcessing": {"processed": 0, "failed": 0, "files": []},
+            "parsedRules": {"required_sections": ["Introduction", "Body", "Conclusion"]},
+            "parsedReference": {"enabled": False},
+            "validation": {"ok": True, "errors": [], "retried": False},
+            "pdfUrl": "/files/x.pdf",
+            "docxUrl": "/files/x.docx",
+        }
+
+    monkeypatch.setattr("routes.report_routes.run_generation_pipeline", _capture_pipeline)
+
+    app.include_router(
+        create_report_router(
+            db=db,
+            output_dir=out_dir,
+            max_content_chars=200000,
+            verify_token=lambda: _verify_token(),
+        )
+    )
+
+    client = TestClient(app)
+    res = client.post(
+        "/generate",
+        json={
+            "userId": "u1",
+            "title": "Section aware",
+            "rules": "Use formal tone",
+            "content": "source content",
+            "sections": [
+                {"title": "Introduction", "mode": "auto_generate"},
+                {"title": "Custom Inputs", "mode": "user_provides"},
+                {"title": "Appendix", "mode": "skip"},
+            ],
+            "ruleOverrides": {
+                "bodyFont": "Calibri",
+                "bodySizePt": 12,
+                "marginTopIn": 1.25,
+                "lineSpacingPt": 14,
+            },
+            "inputFiles": [],
+        },
+    )
+
+    assert res.status_code == 200
+    assert captured["sections"] == [
+        {"title": "Introduction", "mode": "auto_generate"},
+        {"title": "Custom Inputs", "mode": "user_provides"},
+        {"title": "Appendix", "mode": "skip"},
+    ]
+    assert captured["resolved_rules"]["body_font"] == "Calibri"
+    assert captured["resolved_rules"]["body_size_halfpt"] == 24
+    assert captured["resolved_rules"]["margin_top_dxa"] == 1800
+    assert captured["resolved_rules"]["body_line_spacing_val"] == 280
 
 
 def test_generate_error_is_sanitized(monkeypatch):

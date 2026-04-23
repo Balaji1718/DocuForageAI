@@ -26,8 +26,10 @@ def run_generation_pipeline(
     reference_content: str,
     reference_mime_type: str,
     input_files: list[dict[str, Any]],
+    sections: list[dict[str, str]] | None = None,
     max_content_chars: int,
     output_dir: Path,
+    resolved_rules: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     log_event(log, logging.INFO, "pipeline_started", report_id=report_id, title=title)
@@ -61,12 +63,21 @@ def run_generation_pipeline(
         )
 
     ai_started = time.perf_counter()
+    section_plan = [
+        {
+            "title": str(item.get("title") or "").strip(),
+            "mode": str(item.get("mode") or "auto_generate").strip(),
+        }
+        for item in (sections or [])
+        if str(item.get("title") or "").strip()
+    ]
     structured_text, parsed_rules, parsed_reference, validation_report = generate_structured_text(
         title=title,
         rules=rules,
         content=merged_content,
         reference_content=merged_reference,
         reference_mime_type=reference_mime_type,
+        section_plan=section_plan,
         chunk_size=8000,
         retries=1,
     )
@@ -82,6 +93,11 @@ def run_generation_pipeline(
 
     dom_started = time.perf_counter()
     compiled_rules = (parsed_rules or {}).get("compiled") if isinstance(parsed_rules, dict) else {}
+    if resolved_rules:
+        compiled_rules = {
+            **(compiled_rules or {}),
+            "resolved_rules": resolved_rules,
+        }
     document_model = build_document_model(title=title, structured_text=structured_text, compiled_rules=compiled_rules)
     log_event(
         log,

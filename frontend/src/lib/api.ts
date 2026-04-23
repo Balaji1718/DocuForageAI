@@ -21,7 +21,7 @@ function isLikelyBackendOrigin(origin: string): boolean {
 }
 
 export function getApiBaseUrl(): string {
-  const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
+  const envBase = import.meta.env.VITE_API_BASE_URL;
   const sameOrigin = typeof window !== "undefined" ? window.location.origin : "";
   const sameOriginIsBackend =
     typeof window !== "undefined" &&
@@ -49,10 +49,40 @@ export interface GenerateRequest {
   userId: string;
   title: string;
   rules: string;
+  rulesId?: string;
   content: string;
   referenceContent?: string;
   referenceMimeType?: string;
   inputFiles?: InputFilePayload[];
+  metadata?: Record<string, string>;
+  sections?: Array<{
+    title: string;
+    mode: "auto_generate" | "user_provides" | "skip";
+  }>;
+  ruleOverrides?: Record<string, string | number>;
+}
+
+export interface ExtractRulesResponse {
+  success: boolean;
+  rules_id: string;
+  message?: string;
+  validation?: {
+    is_valid: boolean;
+    warnings: string[];
+  };
+  rules_summary?: {
+    page_width?: string;
+    page_height?: string;
+    margins?: {
+      top?: string;
+      left?: string;
+    };
+    body_font?: string;
+    body_size?: string;
+    sections_detected?: number;
+    tables_found?: number;
+    confidence?: string;
+  };
 }
 
 export interface InputFilePayload {
@@ -106,6 +136,29 @@ export async function generateReport(payload: GenerateRequest): Promise<Generate
     throw new ApiError(data?.error || data?.detail || `Backend error ${res.status}`, data);
   }
   return data;
+}
+
+export async function extractRulesFromDocx(params: {
+  file: File;
+  documentType?: string;
+  notes?: string;
+}): Promise<ExtractRulesResponse> {
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("document_type", params.documentType || "generic");
+  form.append("notes", params.notes || "");
+
+  const headers = await authHeader();
+  const res = await fetch(`${getApiBaseUrl()}/extract-rules`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(data?.error || data?.detail || `Backend error ${res.status}`);
+  }
+  return data as ExtractRulesResponse;
 }
 
 export function fileUrl(path: string): string {

@@ -23,10 +23,11 @@ export default function Auth() {
       if (mode === "login") await signIn(email, password);
       else await signUp(email, password);
       navigate("/");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Please try again.";
       toast({
         title: mode === "login" ? "Login failed" : "Signup failed",
-        description: err?.message ?? "Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {

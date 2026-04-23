@@ -7,9 +7,9 @@ def test_validation_fails_with_placeholder_sections() -> None:
     text = "# Title\n\n## Introduction\nBrief intro."
     enforced, report = enforce_and_validate(text, ["Introduction", "Body", "Conclusion"])
 
-    assert "## Body" in enforced
+    assert enforced == text
     assert report["ok"] is False
-    assert any("placeholder" in msg.lower() for msg in report["errors"])
+    assert any("missing required section heading" in msg.lower() for msg in report["errors"])
 
 
 def test_validation_passes_with_structured_content() -> None:
@@ -73,3 +73,25 @@ def test_validation_returns_component_scores_and_structured_feedback() -> None:
     assert "suggestions" in feedback
     assert isinstance(feedback["issues"], list)
     assert isinstance(feedback["suggestions"], list)
+
+
+def test_validation_strips_xml_artifact_numbers_before_validation() -> None:
+    text = (
+        "# Title\n\n"
+        "## Introduction\n"
+        "This introduction contains an XML artifact number 1234567 that should be stripped while still providing "
+        "enough context, detail, and explanation to satisfy the section validator after cleanup.\n\n"
+        "## Body\n"
+        "The body section remains sufficiently long with multiple sentences, discussion points, and supporting "
+        "detail so that validation remains stable after the cleanup step removes the leaked numeric token.\n\n"
+        "## Conclusion\n"
+        "The conclusion wraps up the report with enough words, closes the argument clearly, and avoids leaving any "
+        "artifact number traces in the final validated output."
+    )
+
+    enforced, report = enforce_and_validate(text, ["Introduction", "Body", "Conclusion"])
+
+    assert enforced == text
+    assert report["ok"] is True
+    assert report.get("has_xml_artifact_numbers") is True
+    assert report.get("xml_artifact_number_count") == 1

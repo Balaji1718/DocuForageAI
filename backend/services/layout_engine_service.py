@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 import math
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_LAYOUT_THRESHOLDS = {
@@ -516,7 +520,7 @@ def run_render_validation_with_retries(
                     compiled_rules=compiled_rules,
                 )
             except Exception as e:
-                pass  # Continue even if generation fails
+                logger.exception("Generation failed during render validation attempt %s for report %s", attempt, report_id)
         
         # Validate rendered artifacts
         validation_result = validate_fn(

@@ -26,6 +26,7 @@ def generate_structured_text(
     content: str,
     reference_content: str = "",
     reference_mime_type: str = "",
+    section_plan: list[dict[str, str]] | None = None,
     chunk_size: int = 8000,
     retries: int = 1,
 ) -> tuple[str, dict, dict, dict]:
@@ -37,6 +38,130 @@ def generate_structured_text(
     parsed_reference = parse_reference_content(reference_content, reference_mime_type)
     reference_guidance = build_reference_guidance(parsed_reference)
     required_sections = parsed_rules.get("required_sections") or ["Introduction", "Body", "Conclusion"]
+
+    def _canonical(name: str) -> str:
+        return re.sub(r"\s+", " ", (name or "").strip()).title()
+
+    def _normalize_section_plan(items: list[dict[str, str]] | None) -> list[dict[str, str]]:
+        allowed = {"auto_generate", "user_provides", "skip"}
+        normalized: list[dict[str, str]] = []
+        for item in items or []:
+            title = _canonical(str(item.get("title") or ""))
+            if not title:
+                continue
+            mode = str(item.get("mode") or "auto_generate").strip()
+            if mode not in allowed:
+                mode = "auto_generate"
+            normalized.append({"title": title, "mode": mode})
+        return normalized
+
+    normalized_sections = _normalize_section_plan(section_plan)
+    if normalized_sections:
+        required_sections = [
+            item["title"]
+            for item in normalized_sections
+            if item["mode"] == "auto_generate"
+        ] or required_sections
+
+    def _build_section_plan_guidance(items: list[dict[str, str]]) -> str:
+        auto_titles = [item["title"] for item in items if item["mode"] == "auto_generate"]
+        user_titles = [item["title"] for item in items if item["mode"] == "user_provides"]
+        skip_titles = [item["title"] for item in items if item["mode"] == "skip"]
+
+        lines = [
+            "SECTION PLAN:",
+            "- Follow this section order exactly using markdown headings (##).",
+        ]
+        if auto_titles:
+            lines.append("- Auto-generate content for: " + ", ".join(auto_titles))
+        if user_titles:
+            lines.append("- For user-provided sections, include heading only and do not generate substantive content: " + ", ".join(user_titles))
+        if skip_titles:
+            lines.append("- Omit skipped sections entirely: " + ", ".join(skip_titles))
+        return "\n".join(lines)
+
+    def _build_section_generation_guidance(section_title: str, base_guidance: str) -> str:
+        return "\n\n".join(
+            part
+            for part in (
+                base_guidance,
+                "SECTION-BY-SECTION GENERATION:",
+                f"- Generate only the '{section_title}' section.",
+                "- Return markdown beginning with the matching heading.",
+                "- Do not emit sibling sections or rewrite unrelated sections.",
+                "- Keep the response focused on this section while preserving report continuity.",
+            )
+            if part.strip()
+        ).strip()
+
+    def _split_headed_sections(markdown_text: str) -> tuple[str, list[dict[str, str]]]:
+        lines = markdown_text.splitlines()
+        heading_pattern = re.compile(r"^#{1,3}\s+(.+?)\s*$")
+
+        preamble_lines: list[str] = []
+        sections: list[dict[str, str]] = []
+        current: dict[str, Any] | None = None
+
+        for line in lines:
+            match = heading_pattern.match(line.strip())
+            if match:
+                if current is not None:
+                    current["body"] = "\n".join(current["body_lines"]).strip()
+                    sections.append({"title": current["title"], "heading": current["heading"], "body": current["body"]})
+                heading = line.strip()
+                title = _canonical(match.group(1))
+                current = {"title": title, "heading": heading, "body_lines": []}
+                continue
+
+            if current is None:
+                preamble_lines.append(line)
+            else:
+                current["body_lines"].append(line)
+
+        if current is not None:
+            current["body"] = "\n".join(current["body_lines"]).strip()
+            sections.append({"title": current["title"], "heading": current["heading"], "body": current["body"]})
+
+        return "\n".join(preamble_lines).strip(), sections
+
+    def _apply_section_modes(markdown_text: str, items: list[dict[str, str]]) -> str:
+        if not items:
+            return markdown_text
+
+        preamble, sections = _split_headed_sections(markdown_text)
+        by_title: dict[str, dict[str, str]] = {}
+        for section in sections:
+            by_title.setdefault(section["title"], section)
+
+        rebuilt: list[str] = []
+        if preamble:
+            rebuilt.append(preamble)
+
+        for item in items:
+            title = item["title"]
+            mode = item["mode"]
+            if mode == "skip":
+                continue
+
+            if mode == "user_provides":
+                rebuilt.append(
+                    f"## {title}\n"
+                    "This section is intentionally reserved for user-provided content and follows the requested "
+                    "structure without adding AI-authored analysis."
+                )
+                continue
+
+            existing = by_title.get(title)
+            if existing and existing.get("body"):
+                rebuilt.append(f"## {title}\n{existing['body']}")
+            else:
+                rebuilt.append(
+                    f"## {title}\n"
+                    "This section summarizes the available source material in a concise, formal style to preserve "
+                    "the required document structure."
+                )
+
+        return "\n\n".join(part.strip() for part in rebuilt if part.strip()).strip()
 
     def _extract_sections(markdown_text: str) -> list[dict[str, str]]:
         section_pattern = re.compile(r"(?ms)^#{1,3}\s+(.+?)\s*$")
@@ -163,6 +288,45 @@ def generate_structured_text(
                     )
         return "\n\n".join(sections)
 
+    def _generate_sections_individually(guidance: str, items: list[dict[str, str]]) -> str:
+        sections: list[str] = []
+        for item in items:
+            title = item["title"]
+            mode = item["mode"]
+
+            if mode == "skip":
+                continue
+
+            if mode == "user_provides":
+                sections.append(
+                    f"## {title}\n"
+                    "This section is intentionally reserved for user-provided content and follows the requested "
+                    "structure without adding AI-authored analysis."
+                )
+                continue
+
+            generated = generate_with_collaboration(
+                title=title,
+                rules=_build_section_generation_guidance(title, guidance),
+                content=content,
+                chunk_index=1,
+                total_chunks=1,
+            )
+            generated = generated.strip()
+            if not generated:
+                continue
+            if not re.match(rf"^#{{1,3}}\s+{re.escape(title)}\b", generated, flags=re.IGNORECASE | re.MULTILINE):
+                if not generated.startswith("#"):
+                    generated = f"## {title}\n{generated}"
+            sections.append(generated)
+
+        return "\n\n".join(section.strip() for section in sections if section.strip()).strip()
+
+    def _generate_primary_pass(guidance: str) -> str:
+        if normalized_sections:
+            return _generate_sections_individually(guidance, normalized_sections)
+        return _generate_chunks_with_guidance(guidance)
+
     def _refine_large_output_if_needed(joined: str, guidance: str) -> str:
         if len(chunks) <= 1 or not ENABLE_LARGE_CONTENT_REFINEMENT:
             return joined
@@ -185,9 +349,13 @@ def generate_structured_text(
             log.warning("Large-content refinement skipped due to error: %s", exc)
             return joined
 
+    section_guidance = _build_section_plan_guidance(normalized_sections) if normalized_sections else ""
     combined_guidance = f"{rules_guidance}\n\nREFERENCE ALIGNMENT:\n{reference_guidance}"
-    first_pass = _generate_chunks_with_guidance(combined_guidance)
+    if section_guidance:
+        combined_guidance = f"{combined_guidance}\n\n{section_guidance}"
+    first_pass = _generate_primary_pass(combined_guidance)
     first_pass = _refine_large_output_if_needed(first_pass, combined_guidance)
+    first_pass = _apply_section_modes(first_pass, normalized_sections)
     first_enforced, first_report = enforce_and_validate(first_pass, required_sections, compiled_rules=compiled_rules)
 
     if first_report.get("ok"):
@@ -218,8 +386,9 @@ def generate_structured_text(
         "- Avoid long unbroken text blocks.\n"
         "- Ensure Introduction, Body, and Conclusion are present unless explicit replacements are required."
     )
-    second_pass = _generate_chunks_with_guidance(retry_guidance)
+    second_pass = _generate_primary_pass(retry_guidance)
     second_pass = _refine_large_output_if_needed(second_pass, retry_guidance)
+    second_pass = _apply_section_modes(second_pass, normalized_sections)
     second_enforced, second_report = enforce_and_validate(second_pass, required_sections, compiled_rules=compiled_rules)
     second_report["retried"] = True
     second_report["partialRegeneration"] = bool(first_report.get("weakSections"))
