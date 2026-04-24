@@ -3,10 +3,16 @@ from __future__ import annotations
 import logging
 import os
 import re
+from typing import Any
 
 from ai_fallback import generate_with_collaboration
 from services.rule_compiler import build_compiled_rules_guidance, compile_rules
-from services.reference_service import build_reference_guidance, parse_reference_content
+from services.reference_service import (
+    build_reference_guidance,
+    build_style_reference_guidance,
+    is_style_reference_rules,
+    parse_reference_content,
+)
 from services.rule_service import parse_rules_text
 from services.validation_service import enforce_and_validate
 from utils.helpers import chunk_text
@@ -26,6 +32,7 @@ def generate_structured_text(
     content: str,
     reference_content: str = "",
     reference_mime_type: str = "",
+    style_reference_rules: dict[str, Any] | None = None,
     section_plan: list[dict[str, str]] | None = None,
     chunk_size: int = 8000,
     retries: int = 1,
@@ -37,6 +44,7 @@ def generate_structured_text(
     rules_guidance = build_compiled_rules_guidance(compiled_rules)
     parsed_reference = parse_reference_content(reference_content, reference_mime_type)
     reference_guidance = build_reference_guidance(parsed_reference)
+    style_reference_guidance = build_style_reference_guidance(style_reference_rules) if is_style_reference_rules(style_reference_rules) else "No DOCX style reference provided."
     required_sections = parsed_rules.get("required_sections") or ["Introduction", "Body", "Conclusion"]
 
     def _canonical(name: str) -> str:
@@ -351,6 +359,8 @@ def generate_structured_text(
 
     section_guidance = _build_section_plan_guidance(normalized_sections) if normalized_sections else ""
     combined_guidance = f"{rules_guidance}\n\nREFERENCE ALIGNMENT:\n{reference_guidance}"
+    if style_reference_rules and is_style_reference_rules(style_reference_rules):
+        combined_guidance = f"{combined_guidance}\n\nSTYLE ALIGNMENT:\n{style_reference_guidance}"
     if section_guidance:
         combined_guidance = f"{combined_guidance}\n\n{section_guidance}"
     first_pass = _generate_primary_pass(combined_guidance)

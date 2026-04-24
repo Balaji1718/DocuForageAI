@@ -13,7 +13,7 @@ import { toast } from "@/hooks/use-toast";
 import { ApiError, extractRulesFromDocx, generateReport } from "@/lib/api";
 import { ArrowLeft, Sparkles, Plus, Trash2, ChevronUp, ChevronDown, GripVertical } from "lucide-react";
 
-const MAX_CONTENT = 100_000; // 100k chars guard
+const MAX_CONTENT = 300_000; // higher ceiling for long-form reports
 const MAX_FILE_BYTES = 50_000_000;
 
 export interface DocumentSection {

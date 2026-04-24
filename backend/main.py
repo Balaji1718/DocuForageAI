@@ -69,7 +69,7 @@ FRONTEND_DIST_DIR = Path(
 )
 FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
 
-MAX_CONTENT_CHARS = int(os.getenv("MAX_CONTENT_CHARS", "200000"))  # 200k hard limit
+MAX_CONTENT_CHARS = int(os.getenv("MAX_CONTENT_CHARS", "300000"))  # higher ceiling for long-form reports
 
 def _frontend_index_or_404() -> FileResponse:
     if not FRONTEND_INDEX_FILE.exists():

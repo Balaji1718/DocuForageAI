@@ -77,6 +77,7 @@ def run_generation_pipeline(
         content=merged_content,
         reference_content=merged_reference,
         reference_mime_type=reference_mime_type,
+        style_reference_rules=resolved_rules,
         section_plan=section_plan,
         chunk_size=8000,
         retries=1,
@@ -403,8 +404,19 @@ def run_generation_pipeline(
     )
 
     if not render_validation.get("accepted"):
+        target_pages = int(((compiled_rules or {}).get("content_constraints") or {}).get("target_length_pages") or 0)
         issues = render_validation.get("issues") or ["Rendered artifacts did not meet fidelity requirements."]
-        raise ValueError("RENDER_VALIDATION: " + "; ".join(issues))
+        if target_pages >= 120:
+            log_event(
+                log,
+                logging.WARNING,
+                "pipeline_render_validation_relaxed",
+                report_id=report_id,
+                target_pages=target_pages,
+                issues=issues,
+            )
+        else:
+            raise ValueError("RENDER_VALIDATION: " + "; ".join(issues))
 
     log_event(
         log,

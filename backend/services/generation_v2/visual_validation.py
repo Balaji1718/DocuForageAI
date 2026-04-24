@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -34,21 +36,40 @@ class VisualValidationResult:
 
 
 class LibreOfficeRenderer:
-    """Canonical renderer via pinned Docker image running LibreOffice headless."""
+    """LibreOffice renderer that prefers a local soffice install and falls back to Docker."""
 
     def __init__(
         self,
         docker_image: str = "docuforage/libreoffice-renderer:7.6.4-fixedfonts",
         soffice_cmd: str = "/usr/bin/soffice",
+        local_soffice_cmd: str | None = None,
     ) -> None:
         self.docker_image = docker_image
         self.soffice_cmd = soffice_cmd
+        self.local_soffice_cmd = local_soffice_cmd
 
-    async def render_docx_to_png_pages(self, docx_path: Path, output_dir: Path, dpi: int = 150) -> list[Path]:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        docx_path = docx_path.resolve()
-        output_dir = output_dir.resolve()
+    def _resolve_local_soffice(self) -> Path | None:
+        candidates: list[str | None] = [
+            self.local_soffice_cmd,
+            os.getenv("LO_SOFFICE_PATH"),
+            shutil.which("soffice.com"),
+            shutil.which("soffice.exe"),
+            shutil.which("soffice"),
+            r"C:\Program Files\LibreOffice\program\soffice.com",
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.com",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ]
 
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = Path(candidate)
+            if path.exists():
+                return path
+        return None
+
+    async def _render_docx_via_docker(self, docx_path: Path, output_dir: Path, dpi: int) -> list[Path]:
         command = [
             "docker",
             "run",
@@ -97,6 +118,105 @@ class LibreOfficeRenderer:
             )
 
         return pages
+
+    async def _render_docx_via_local_soffice(self, docx_path: Path, output_dir: Path, dpi: int) -> list[Path]:
+        soffice_path = self._resolve_local_soffice()
+        if soffice_path is None:
+            raise VisualValidationError(
+                "LibreOffice local renderer is unavailable",
+                failures=[PageDiffFailure(page_number=0, ssim_score=0.0, diff_image_path="", reason="soffice_not_found")],
+            )
+
+        pdf_command = [
+            str(soffice_path),
+            "--headless",
+            "--nologo",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(output_dir),
+            str(docx_path),
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *pdf_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            raise VisualValidationError(
+                "LibreOffice render failed",
+                failures=[
+                    PageDiffFailure(
+                        page_number=0,
+                        ssim_score=0.0,
+                        diff_image_path="",
+                        reason=(stderr.decode("utf-8", errors="ignore") or stdout.decode("utf-8", errors="ignore"))[:500],
+                    )
+                ],
+            )
+
+        pdf_pages = sorted(output_dir.glob("*.pdf"))
+        if not pdf_pages:
+            raise VisualValidationError(
+                "LibreOffice produced no PDF output",
+                failures=[PageDiffFailure(page_number=0, ssim_score=0.0, diff_image_path="", reason="no_pdf_output")],
+            )
+
+        try:
+            import fitz
+        except Exception as exc:  # noqa: BLE001
+            raise VisualValidationError(
+                "PyMuPDF is required for local LibreOffice rendering",
+                failures=[PageDiffFailure(page_number=0, ssim_score=0.0, diff_image_path="", reason=str(exc))],
+            ) from exc
+
+        pdf_path = pdf_pages[0]
+        document = fitz.open(str(pdf_path))
+        rendered_pages: list[Path] = []
+
+        try:
+            scale = dpi / 72.0
+            matrix = fitz.Matrix(scale, scale)
+            for index, page in enumerate(document, start=1):
+                pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
+                page_path = output_dir / f"page_{index:03d}.png"
+                pixmap.save(str(page_path))
+                rendered_pages.append(page_path)
+        finally:
+            document.close()
+
+        try:
+            pdf_path.unlink()
+        except OSError:
+            pass
+
+        if not rendered_pages:
+            raise VisualValidationError(
+                "LibreOffice produced no PNG output",
+                failures=[PageDiffFailure(page_number=0, ssim_score=0.0, diff_image_path="", reason="no_png_output")],
+            )
+
+        return rendered_pages
+
+    async def render_docx_to_png_pages(self, docx_path: Path, output_dir: Path, dpi: int = 150) -> list[Path]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        docx_path = docx_path.resolve()
+        output_dir = output_dir.resolve()
+
+        if self._resolve_local_soffice() is not None:
+            return await self._render_docx_via_local_soffice(docx_path=docx_path, output_dir=output_dir, dpi=dpi)
+
+        if shutil.which("docker") is not None:
+            return await self._render_docx_via_docker(docx_path=docx_path, output_dir=output_dir, dpi=dpi)
+
+        raise VisualValidationError(
+            "No LibreOffice renderer is available",
+            failures=[PageDiffFailure(page_number=0, ssim_score=0.0, diff_image_path="", reason="missing_soffice_and_docker")],
+        )
 
 
 class BaselineStore:

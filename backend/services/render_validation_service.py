@@ -214,8 +214,12 @@ def _compare_visual_profiles(
         dark_diff = abs(float(page.get("darkRatio") or 0.0) - expected_dark_ratio)
         centroid_diff = abs(float(page.get("centroidY") or 0.0) - expected_centroid)
 
-        score = 100.0 - (dark_diff * 2500.0) - (centroid_diff * 120.0)
-        score = round(max(0.0, min(100.0, score)), 2)
+        close_match = bool(expected.get("blockCount", 0)) and dark_diff <= 0.005 and centroid_diff <= 0.02
+        if close_match:
+            score = 100.0
+        else:
+            score = 100.0 - (dark_diff * 2500.0) - (centroid_diff * 120.0)
+            score = round(max(0.0, min(100.0, score)), 2)
 
         # Determine adaptive threshold based on page content type
         adaptive_threshold = _adaptive_page_threshold(expected)

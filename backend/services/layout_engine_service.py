@@ -16,6 +16,16 @@ DEFAULT_LAYOUT_THRESHOLDS = {
 }
 
 
+def _minimum_page_capacity(compiled_rules: dict[str, Any] | None) -> int:
+    content_constraints = (compiled_rules or {}).get("content_constraints") or {}
+    target_pages = int(content_constraints.get("target_length_pages") or 0)
+    if target_pages >= 120:
+        return 8
+    if target_pages >= 60:
+        return 12
+    return 20
+
+
 def _analyze_page_content_type(layout_plan: dict[str, Any], document_model: dict[str, Any], page_number: int) -> str:
     """Analyze page composition to determine content type.
     
@@ -67,6 +77,7 @@ def _content_aware_capacity_adjustment(
     current_capacity: int,
     content_types: list[str],
     attempt: int,
+    minimum_capacity: int = 20,
 ) -> tuple[int, str]:
     """Calculate capacity adjustment based on page content composition.
     
@@ -118,7 +129,7 @@ def _content_aware_capacity_adjustment(
         reduction = 6
         reason = f"attempt 3 aggressive: uniform reduction regardless of composition"
     
-    new_capacity = max(20, current_capacity - reduction)
+    new_capacity = max(minimum_capacity, current_capacity - reduction)
     return (new_capacity, reason)
 
 
@@ -144,6 +155,7 @@ def solve_layout(document_model: dict[str, Any], compiled_rules: dict[str, Any] 
     typography = compiled.get("typography") or {}
     layout_cfg = compiled.get("layout") or {}
     content_constraints = compiled.get("content_constraints") or {}
+    minimum_capacity = _minimum_page_capacity(compiled)
 
     blocks = document_model.get("blocks") or []
     content_blocks = [b for b in blocks if b.get("type") != "document"]
@@ -163,7 +175,7 @@ def solve_layout(document_model: dict[str, Any], compiled_rules: dict[str, Any] 
         if total_estimated_lines > 0:
             tuned_capacity = math.ceil(total_estimated_lines / max(1, target_pages))
             # Keep sane bounds so we do not produce unrealistic pagination.
-            page_capacity_lines = max(20, min(60, tuned_capacity))
+            page_capacity_lines = max(minimum_capacity, min(60, tuned_capacity))
 
     placements: list[dict[str, Any]] = []
     page = 1
@@ -416,6 +428,7 @@ def correct_layout_from_render_feedback(
     current_plan = layout_plan or solve_layout(document_model=document_model, compiled_rules=compiled)
     feedback = render_validation or {}
     issues = [str(item).lower() for item in (feedback.get("issues") or [])]
+    minimum_capacity = _minimum_page_capacity(compiled)
 
     corrected_plan = deepcopy(current_plan)
     correction_notes: list[str] = []
@@ -424,22 +437,22 @@ def correct_layout_from_render_feedback(
         typography = compiled.get("typography") or {}
         spacing = str(typography.get("line_spacing") or "single")
         if spacing == "double":
-            corrected_plan["pageCapacityLines"] = max(24, int(corrected_plan.get("pageCapacityLines") or 30) - 4)
+            corrected_plan["pageCapacityLines"] = max(minimum_capacity, int(corrected_plan.get("pageCapacityLines") or 30) - 4)
         elif spacing == "1.5":
-            corrected_plan["pageCapacityLines"] = max(30, int(corrected_plan.get("pageCapacityLines") or 38) - 3)
+            corrected_plan["pageCapacityLines"] = max(minimum_capacity, int(corrected_plan.get("pageCapacityLines") or 38) - 3)
         else:
-            corrected_plan["pageCapacityLines"] = max(36, int(corrected_plan.get("pageCapacityLines") or 48) - 2)
+            corrected_plan["pageCapacityLines"] = max(minimum_capacity, int(corrected_plan.get("pageCapacityLines") or 48) - 2)
         correction_notes.append("tightened page capacity to improve pagination alignment")
 
     if any("visual similarity" in issue for issue in issues):
-        corrected_plan["pageCapacityLines"] = max(24, int(corrected_plan.get("pageCapacityLines") or 48) - 1)
+        corrected_plan["pageCapacityLines"] = max(minimum_capacity, int(corrected_plan.get("pageCapacityLines") or 48) - 1)
         correction_notes.append("reduced page capacity to improve visual density matching")
     
     if any("Pages with low visual fidelity" in issue for issue in issues):
         visual_info = feedback.get("visual", {})
         failed_pages = visual_info.get("failedPages", [])
         if failed_pages:
-            corrected_plan["pageCapacityLines"] = max(20, int(corrected_plan.get("pageCapacityLines") or 48) - 3)
+            corrected_plan["pageCapacityLines"] = max(minimum_capacity, int(corrected_plan.get("pageCapacityLines") or 48) - 3)
             correction_notes.append(f"aggressively reduced capacity to fix visual fidelity on pages {failed_pages}")
 
     if any("heading match ratio" in issue or "rendered text similarity" in issue for issue in issues):
@@ -505,6 +518,7 @@ def run_render_validation_with_retries(
     output_dir = output_dir or Path(".")
     current_plan = layout_plan or solve_layout(document_model=document_model, compiled_rules=compiled_rules)
     all_corrections: list[dict[str, Any]] = []
+    minimum_capacity = _minimum_page_capacity(compiled_rules)
     
     for attempt in range(1, max_attempts + 1):
         # Generate documents with current layout
@@ -593,7 +607,7 @@ def run_render_validation_with_retries(
         
         # Apply capacity reduction
         current_capacity = int(current_plan.get("pageCapacityLines") or 48)
-        new_capacity = max(16, current_capacity - reduction_amount)
+        new_capacity = max(minimum_capacity, current_capacity - reduction_amount)
         current_plan["pageCapacityLines"] = new_capacity
         correction_notes.append(f"adjusted page capacity from {current_capacity} to {new_capacity}")
         

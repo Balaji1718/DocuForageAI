@@ -127,7 +127,7 @@ def test_section_plan_applies_modes(monkeypatch):
     )
 
     assert report["ok"] is True
-    assert "## Introduction" in text
+    assert "# Introduction" in text
     assert "## Methodology" in text
     assert "## Analyst Notes" in text
     assert "user-provided content" in text
@@ -201,7 +201,83 @@ def test_section_plan_generates_sections_independently(monkeypatch):
     assert all(call["total_chunks"] == 1 for call in calls)
     assert "Generate only the 'Introduction' section" in calls[0]["rules"]
     assert "Generate only the 'Methodology' section" in calls[1]["rules"]
-    assert "## Introduction" in text
+    assert "# Introduction" in text
     assert "## Methodology" in text
     assert "## User Notes" in text
     assert "## Appendix" not in text
+
+
+def test_docx_style_reference_guidance_is_included(monkeypatch):
+    captured: list[str] = []
+
+    def _fake_generate_with_collaboration(*, title, rules, content, chunk_index, total_chunks):
+        captured.append(rules)
+        return (
+            "# Introduction\n"
+            "This introduction is sufficiently long and structured to pass validation.\n\n"
+            "## Body\n"
+            "The body section is also adequate.\n\n"
+            "## Conclusion\n"
+            "The conclusion closes the report cleanly."
+        )
+
+    monkeypatch.setattr("services.ai_service.generate_with_collaboration", _fake_generate_with_collaboration)
+    monkeypatch.setattr(
+        "services.ai_service.parse_rules_text",
+        lambda _rules: {"required_sections": ["Introduction", "Body", "Conclusion"], "formatting": {}},
+    )
+    monkeypatch.setattr("services.ai_service.compile_rules", lambda _parsed: {"content_constraints": {}})
+    monkeypatch.setattr("services.ai_service.build_compiled_rules_guidance", lambda _compiled: "Rules")
+    monkeypatch.setattr("services.ai_service.parse_reference_content", lambda _content, _mime: {"enabled": False})
+    monkeypatch.setattr("services.ai_service.build_reference_guidance", lambda _ref: "Ref")
+    monkeypatch.setattr(
+        "services.ai_service.enforce_and_validate",
+        lambda text, _required_sections, compiled_rules=None: (
+            text,
+            {
+                "ok": True,
+                "errors": [],
+                "warnings": [],
+                "qualityScore": 100,
+                "weakSections": [],
+                "issues": [],
+                "suggestions": [],
+            },
+        ),
+    )
+
+    text, _parsed_rules, _parsed_reference, report = generate_structured_text(
+        title="Style Reference",
+        rules="Use structure",
+        content="Source content",
+        reference_content="",
+        reference_mime_type="text/plain",
+        style_reference_rules={
+            "source_filename": "MINI PROJECT REPORT .docx",
+            "body_font": "Times New Roman",
+            "body_size_halfpt": 26,
+            "body_alignment": "both",
+            "body_line_spacing_val": 360,
+            "body_left_indent_dxa": 1273,
+            "body_first_line_indent_dxa": 393,
+            "body_right_indent_dxa": 148,
+            "cover_title_size_pt": 16.0,
+            "cover_subtitle_size_pt": 14.0,
+            "prelim_page_format": "lowerRoman",
+            "body_page_format": "decimal",
+            "section_count": 54,
+            "table_count": 12,
+            "image_count": 16,
+            "detected_section_headings": ["BACKGROUND", "PROBLEM STATEMENT", "OBJECTIVES"],
+        },
+        chunk_size=8000,
+        retries=0,
+    )
+
+    assert report["ok"] is True
+    assert captured
+    assert "STYLE ALIGNMENT" in captured[0]
+    assert "DOCX STYLE BLUEPRINT" in captured[0]
+    assert "BACKGROUND" in captured[0]
+    assert "Times New Roman" in captured[0]
+    assert "# Introduction" in text

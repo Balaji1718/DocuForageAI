@@ -4,6 +4,27 @@ import re
 from typing import Any
 
 
+def is_style_reference_rules(reference_rules: dict[str, Any] | None) -> bool:
+    if not reference_rules:
+        return False
+
+    if str(reference_rules.get("source_filename") or "").strip():
+        return True
+    if int(reference_rules.get("footer_count") or 0) > 0:
+        return True
+    if int(reference_rules.get("header_count") or 0) > 0:
+        return True
+    if int(reference_rules.get("section_count") or 0) > 0:
+        return True
+    if int(reference_rules.get("table_count") or 0) > 0:
+        return True
+    if int(reference_rules.get("image_count") or 0) > 0:
+        return True
+    if reference_rules.get("detected_section_headings"):
+        return True
+    return False
+
+
 def _extract_headings(reference_text: str) -> list[dict[str, Any]]:
     headings: list[dict[str, Any]] = []
     numbered = re.compile(r"^(\d+(?:\.\d+)*)\s*[-.)]?\s+(.+)$")
@@ -112,5 +133,47 @@ def build_reference_guidance(reference_json: dict[str, Any]) -> str:
         lines.append("Reference heading blueprint:")
         for heading in headings[:12]:
             lines.append(f"- H{int(heading.get('level') or 1)}: {str(heading.get('title') or 'Untitled')}")
+
+    return "\n".join(lines)
+
+
+def build_style_reference_guidance(reference_rules: dict[str, Any] | None) -> str:
+    if not is_style_reference_rules(reference_rules):
+        return "No DOCX style reference provided."
+
+    rules = reference_rules or {}
+    headings = [str(item).strip() for item in (rules.get("detected_section_headings") or []) if str(item).strip()]
+    body_size = rules.get("body_size_halfpt")
+    body_size_pt = round(float(body_size) / 2.0, 1) if body_size else "unknown"
+    title_size = rules.get("cover_title_size_pt")
+    subtitle_size = rules.get("cover_subtitle_size_pt")
+    left_indent = rules.get("body_left_indent_dxa")
+    first_line = rules.get("body_first_line_indent_dxa")
+    right_indent = rules.get("body_right_indent_dxa")
+    list_indent = rules.get("list_left_indent_pt")
+    page_format = str(rules.get("prelim_page_format") or "lowerRoman")
+    body_page_format = str(rules.get("body_page_format") or "decimal")
+
+    lines = [
+        "DOCX STYLE BLUEPRINT:",
+        "- Use the uploaded DOCX only as a structural and visual reference, not as wording to copy.",
+        f"- Body font: {rules.get('body_font') or 'Times New Roman'}",
+        f"- Body size: {body_size_pt}pt",
+        f"- Body alignment: {rules.get('body_alignment') or 'both'}",
+        f"- Body line spacing: {rules.get('body_line_spacing_val') or 360}",
+        f"- Body indents: left {left_indent or 'n/a'} dxa, first-line {first_line or 'n/a'} dxa, right {right_indent or 'n/a'} dxa",
+        f"- List left indent: {list_indent or 'n/a'} pt",
+        f"- Cover title size: {title_size or 'n/a'} pt",
+        f"- Cover subtitle size: {subtitle_size or 'n/a'} pt",
+        f"- Page numbering: prelim {page_format}, body {body_page_format}",
+        f"- Sections detected: {int(rules.get('section_count') or len(headings) or 0)}",
+        f"- Tables detected: {int(rules.get('table_count') or 0)}",
+        f"- Images detected: {int(rules.get('image_count') or 0)}",
+    ]
+
+    if headings:
+        lines.append("Reference heading blueprint:")
+        for heading in headings[:16]:
+            lines.append(f"- {heading}")
 
     return "\n".join(lines)

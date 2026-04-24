@@ -88,6 +88,11 @@ def _cover_page_summary(text: str, limit: int = 160) -> str:
     return preview[: limit - 3].rstrip() + "..."
 
 
+def _cover_summary_lines(text: str) -> list[str]:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    return lines if lines else []
+
+
 def _page_number_text(page_number: int, page_format: Any) -> str:
     normalized = str(page_format or "").strip().lower()
     if normalized in {"roman", "lowerroman"}:
@@ -159,6 +164,15 @@ def _apply_docx_section_geometry(section, formatting: dict[str, Any]) -> None:
     section.right_margin = Inches(_dxa_to_inches(formatting["margin_right_dxa"]))
     section.header_distance = Inches(_dxa_to_inches(formatting["margin_header_dxa"]))
     section.footer_distance = Inches(_dxa_to_inches(formatting["margin_footer_dxa"]))
+
+
+def _apply_docx_indents(paragraph_format, *, left_dxa: Any = None, right_dxa: Any = None, first_line_dxa: Any = None) -> None:
+    if left_dxa is not None:
+        paragraph_format.left_indent = Inches(_dxa_to_inches(left_dxa))
+    if right_dxa is not None:
+        paragraph_format.right_indent = Inches(_dxa_to_inches(right_dxa))
+    if first_line_dxa is not None:
+        paragraph_format.first_line_indent = Inches(_dxa_to_inches(first_line_dxa))
 
 
 def _document_split_requested(formatting: dict[str, Any]) -> bool:
@@ -355,6 +369,7 @@ def _resolve_docx_formatting_rules(compiled_rules: dict[str, Any] | None) -> dic
         "prelim_page_format": compiled.get("prelim_page_format"),
         "page_number_alignment": compiled.get("page_number_alignment"),
         "page_number_section_restart": compiled.get("page_number_section_restart"),
+        "cover_summary_text": compiled.get("cover_summary_text"),
     })
     has_flat = any(v is not None for v in flat_candidate.values())
     if has_flat and not resolved:
@@ -399,6 +414,9 @@ def _resolve_docx_formatting_rules(compiled_rules: dict[str, Any] | None) -> dic
         "body_line_spacing_factor": body_line_spacing_factor,
         "body_space_before": pick("body_space_before"),
         "body_space_after": resolved.get("body_space_after") or SYSTEM_DEFAULTS["body_space_after"],
+        "body_left_indent_dxa": resolved.get("body_left_indent_dxa"),
+        "body_right_indent_dxa": resolved.get("body_right_indent_dxa"),
+        "body_first_line_indent_dxa": resolved.get("body_first_line_indent_dxa"),
         "heading_numbering": bool(layout.get("heading_numbering")),
         "has_page_numbers": bool(resolved.get("has_page_numbers")),
         "page_number_format": resolved.get("page_number_format") or resolved.get("body_page_format") or SYSTEM_DEFAULTS["body_page_format"],
@@ -424,6 +442,7 @@ def _resolve_docx_formatting_rules(compiled_rules: dict[str, Any] | None) -> dic
         "cover_summary_leading_factor": pick("cover_summary_leading_factor"),
         "cover_summary_alignment": pick("cover_summary_alignment"),
         "cover_summary_space_after_pt": pick("cover_summary_space_after_pt"),
+        "cover_summary_text": resolved.get("cover_summary_text") or compiled.get("cover_summary_text"),
         "signature_alignment": pick("signature_alignment"),
         "signature_label_size_pt": pick("signature_label_size_pt"),
         "signature_label_bold": pick("signature_label_bold"),
@@ -433,7 +452,17 @@ def _resolve_docx_formatting_rules(compiled_rules: dict[str, Any] | None) -> dic
         "signature_block_space_before_pt": pick("signature_block_space_before_pt"),
         "heading_leading_factor": pick("heading_leading_factor"),
         "list_left_indent_pt": pick("list_left_indent_pt"),
+        "list_first_line_indent_pt": resolved.get("list_first_line_indent_pt"),
         "list_block_spacing_pt": pick("list_block_spacing_pt"),
+        "h1_left_indent_dxa": resolved.get("h1_left_indent_dxa"),
+        "h1_right_indent_dxa": resolved.get("h1_right_indent_dxa"),
+        "h1_first_line_indent_dxa": resolved.get("h1_first_line_indent_dxa"),
+        "h2_left_indent_dxa": resolved.get("h2_left_indent_dxa"),
+        "h2_right_indent_dxa": resolved.get("h2_right_indent_dxa"),
+        "h2_first_line_indent_dxa": resolved.get("h2_first_line_indent_dxa"),
+        "h3_left_indent_dxa": resolved.get("h3_left_indent_dxa"),
+        "h3_right_indent_dxa": resolved.get("h3_right_indent_dxa"),
+        "h3_first_line_indent_dxa": resolved.get("h3_first_line_indent_dxa"),
         "headings": {
             level: {
                 "font": (headings.get(level) or {}).get("font", heading_defaults[level]["font"]),
@@ -553,12 +582,21 @@ def build_docx(
     style.paragraph_format.space_after = Pt(_twips_to_pt(formatting["body_space_after"]))
     style.paragraph_format.line_spacing = float(formatting["body_line_spacing_factor"])
     style.paragraph_format.alignment = _docx_alignment(formatting.get("body_alignment"))
+    _apply_docx_indents(
+        style.paragraph_format,
+        left_dxa=formatting.get("body_left_indent_dxa"),
+        right_dxa=formatting.get("body_right_indent_dxa"),
+        first_line_dxa=formatting.get("body_first_line_indent_dxa"),
+    )
 
     split_requested = _document_split_requested(formatting)
     prelim_page_format = formatting.get("prelim_page_format") or formatting.get("page_number_format") or formatting.get("body_page_format") or "decimal"
     body_page_format = formatting.get("body_page_format") or formatting.get("page_number_format") or "decimal"
 
     if split_requested:
+        cover_summary_text = str(formatting.get("cover_summary_text") or "").strip()
+        preview = cover_summary_text or _cover_page_summary(rules)
+
         cover = doc.add_paragraph()
         cover.alignment = _docx_alignment(formatting["cover_title_alignment"])
         cover.paragraph_format.space_after = Pt(float(formatting["cover_title_space_after_pt"]))
@@ -568,23 +606,33 @@ def build_docx(
         cover_run.font.size = Pt(float(formatting["cover_title_size_pt"]))
         cover_run.bold = bool(formatting["cover_title_bold"])
 
-        sub = doc.add_paragraph()
-        sub.alignment = _docx_alignment(formatting["cover_subtitle_alignment"])
-        sub.paragraph_format.space_after = Pt(float(formatting["cover_subtitle_space_after_pt"]))
-        sub_run = sub.add_run("Generated by DocuForge AI")
-        sub_run.font.name = str(formatting["body_font"])
-        sub_run.italic = True
-        sub_run.italic = bool(formatting["cover_subtitle_italic"])
-        sub_run.font.size = Pt(float(formatting["cover_subtitle_size_pt"]))
+        if preview and (cover_summary_text or not formatting["has_prelim_section"]):
+            if not cover_summary_text:
+                sub = doc.add_paragraph()
+                sub.alignment = _docx_alignment(formatting["cover_subtitle_alignment"])
+                sub.paragraph_format.space_after = Pt(float(formatting["cover_subtitle_space_after_pt"]))
+                sub_run = sub.add_run("Generated by DocuForge AI")
+                sub_run.font.name = str(formatting["body_font"])
+                sub_run.italic = True
+                sub_run.italic = bool(formatting["cover_subtitle_italic"])
+                sub_run.font.size = Pt(float(formatting["cover_subtitle_size_pt"]))
 
-        preview = _cover_page_summary(rules)
-        if not formatting["has_prelim_section"] and preview:
-            summary = doc.add_paragraph()
-            summary.alignment = _docx_alignment(formatting["cover_summary_alignment"])
-            summary.paragraph_format.space_after = Pt(float(formatting["cover_summary_space_after_pt"]))
-            summary_run = summary.add_run(preview)
-            summary_run.font.name = str(formatting["body_font"])
-            summary_run.font.size = Pt(float(formatting["cover_summary_size_pt"]))
+            for summary_line in _cover_summary_lines(preview):
+                summary = doc.add_paragraph()
+                summary.alignment = _docx_alignment(formatting["cover_summary_alignment"])
+                summary.paragraph_format.space_after = Pt(float(formatting["cover_summary_space_after_pt"]))
+                summary_run = summary.add_run(summary_line)
+                summary_run.font.name = str(formatting["body_font"])
+                summary_run.font.size = Pt(float(formatting["cover_summary_size_pt"]))
+        else:
+            sub = doc.add_paragraph()
+            sub.alignment = _docx_alignment(formatting["cover_subtitle_alignment"])
+            sub.paragraph_format.space_after = Pt(float(formatting["cover_subtitle_space_after_pt"]))
+            sub_run = sub.add_run("Generated by DocuForge AI")
+            sub_run.font.name = str(formatting["body_font"])
+            sub_run.italic = True
+            sub_run.italic = bool(formatting["cover_subtitle_italic"])
+            sub_run.font.size = Pt(float(formatting["cover_subtitle_size_pt"]))
 
         if formatting["has_prelim_section"]:
             prelim_section = doc.add_section(WD_SECTION_START.NEW_PAGE)
@@ -600,13 +648,14 @@ def build_docx(
             prelim_run.bold = True
             prelim_run.font.size = Pt(float(formatting["cover_title_size_pt"]))
 
-            if preview:
-                summary = doc.add_paragraph()
-                summary.alignment = _docx_alignment(formatting["cover_summary_alignment"])
-                summary.paragraph_format.space_after = Pt(float(formatting["cover_summary_space_after_pt"]))
-                summary_run = summary.add_run(preview)
-                summary_run.font.name = str(formatting["body_font"])
-                summary_run.font.size = Pt(float(formatting["cover_summary_size_pt"]))
+            if preview and not cover_summary_text:
+                for summary_line in _cover_summary_lines(preview):
+                    summary = doc.add_paragraph()
+                    summary.alignment = _docx_alignment(formatting["cover_summary_alignment"])
+                    summary.paragraph_format.space_after = Pt(float(formatting["cover_summary_space_after_pt"]))
+                    summary_run = summary.add_run(summary_line)
+                    summary_run.font.name = str(formatting["body_font"])
+                    summary_run.font.size = Pt(float(formatting["cover_summary_size_pt"]))
 
             if formatting["has_page_numbers"]:
                 _configure_docx_page_numbers(prelim_section, formatting, page_format_override=prelim_page_format, section_restart=True)
@@ -665,6 +714,12 @@ def build_docx(
     h1_style.font.small_caps = bool(h1_rules.get("small_caps"))
     h1_style.paragraph_format.space_before = Pt(_twips_to_pt(h1_rules["space_before"]))
     h1_style.paragraph_format.space_after = Pt(_twips_to_pt(h1_rules["space_after"]))
+    _apply_docx_indents(
+        h1_style.paragraph_format,
+        left_dxa=formatting.get("h1_left_indent_dxa"),
+        right_dxa=formatting.get("h1_right_indent_dxa"),
+        first_line_dxa=formatting.get("h1_first_line_indent_dxa"),
+    )
 
     h2_style.font.name = str(h2_rules["font"])
     h2_style.font.size = Pt(_halfpt_to_pt(h2_rules["size_halfpt"]))
@@ -676,6 +731,12 @@ def build_docx(
     h2_style.font.small_caps = bool(h2_rules.get("small_caps"))
     h2_style.paragraph_format.space_before = Pt(_twips_to_pt(h2_rules["space_before"]))
     h2_style.paragraph_format.space_after = Pt(_twips_to_pt(h2_rules["space_after"]))
+    _apply_docx_indents(
+        h2_style.paragraph_format,
+        left_dxa=formatting.get("h2_left_indent_dxa"),
+        right_dxa=formatting.get("h2_right_indent_dxa"),
+        first_line_dxa=formatting.get("h2_first_line_indent_dxa"),
+    )
 
     h3_style.font.name = str(h3_rules["font"])
     h3_style.font.size = Pt(_halfpt_to_pt(h3_rules["size_halfpt"]))
@@ -687,6 +748,12 @@ def build_docx(
     h3_style.font.small_caps = bool(h3_rules.get("small_caps"))
     h3_style.paragraph_format.space_before = Pt(_twips_to_pt(h3_rules["space_before"]))
     h3_style.paragraph_format.space_after = Pt(_twips_to_pt(h3_rules["space_after"]))
+    _apply_docx_indents(
+        h3_style.paragraph_format,
+        left_dxa=formatting.get("h3_left_indent_dxa"),
+        right_dxa=formatting.get("h3_right_indent_dxa"),
+        first_line_dxa=formatting.get("h3_first_line_indent_dxa"),
+    )
 
     for index, (kind, val) in enumerate(blocks):
         placement = placements[index] if index < len(placements) else None
@@ -715,6 +782,12 @@ def build_docx(
             p.paragraph_format.space_after = Pt(_twips_to_pt(formatting.get("body_space_after")))
             p.paragraph_format.line_spacing = float(formatting["body_line_spacing_factor"])
             p.paragraph_format.alignment = _docx_alignment(formatting.get("body_alignment"))
+            _apply_docx_indents(
+                p.paragraph_format,
+                left_dxa=formatting.get("body_left_indent_dxa"),
+                right_dxa=formatting.get("body_right_indent_dxa"),
+                first_line_dxa=formatting.get("body_first_line_indent_dxa"),
+            )
 
     _append_docx_signature_block(doc, formatting, _resolve_signature_block(compiled_rules))
 
@@ -778,6 +851,9 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             leading=h1_size * heading_factor,
             spaceBefore=_twips_to_pt(h1_rules["space_before"]),
             spaceAfter=_twips_to_pt(h1_rules["space_after"]),
+            leftIndent=_twips_to_pt(formatting.get("h1_left_indent_dxa")) or 0.0,
+            rightIndent=_twips_to_pt(formatting.get("h1_right_indent_dxa")) or 0.0,
+            firstLineIndent=_twips_to_pt(formatting.get("h1_first_line_indent_dxa")) or 0.0,
         ),
         "h2": ParagraphStyle(
             "H2",
@@ -787,6 +863,9 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             leading=h2_size * heading_factor,
             spaceBefore=_twips_to_pt(h2_rules["space_before"]),
             spaceAfter=_twips_to_pt(h2_rules["space_after"]),
+            leftIndent=_twips_to_pt(formatting.get("h2_left_indent_dxa")) or 0.0,
+            rightIndent=_twips_to_pt(formatting.get("h2_right_indent_dxa")) or 0.0,
+            firstLineIndent=_twips_to_pt(formatting.get("h2_first_line_indent_dxa")) or 0.0,
         ),
         "h3": ParagraphStyle(
             "H3",
@@ -796,6 +875,9 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             leading=h3_size * heading_factor,
             spaceBefore=_twips_to_pt(h3_rules["space_before"]),
             spaceAfter=_twips_to_pt(h3_rules["space_after"]),
+            leftIndent=_twips_to_pt(formatting.get("h3_left_indent_dxa")) or 0.0,
+            rightIndent=_twips_to_pt(formatting.get("h3_right_indent_dxa")) or 0.0,
+            firstLineIndent=_twips_to_pt(formatting.get("h3_first_line_indent_dxa")) or 0.0,
         ),
         "p": ParagraphStyle(
             "Body",
@@ -806,6 +888,9 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             spaceBefore=_twips_to_pt(formatting["body_space_before"]),
             spaceAfter=_twips_to_pt(formatting["body_space_after"]),
             alignment=_reportlab_alignment(formatting["body_alignment"]),
+            leftIndent=_twips_to_pt(formatting.get("body_left_indent_dxa")) or 0.0,
+            rightIndent=_twips_to_pt(formatting.get("body_right_indent_dxa")) or 0.0,
+            firstLineIndent=_twips_to_pt(formatting.get("body_first_line_indent_dxa")) or 0.0,
         ),
         "li": ParagraphStyle(
             "Li",
@@ -816,6 +901,7 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             spaceBefore=_twips_to_pt(formatting["body_space_before"]),
             spaceAfter=_twips_to_pt(formatting["body_space_after"]),
             leftIndent=float(formatting["list_left_indent_pt"]),
+            firstLineIndent=float(formatting["list_first_line_indent_pt"] or 0.0),
             alignment=_reportlab_alignment(formatting["body_alignment"]),
         ),
         "oli": ParagraphStyle(
@@ -827,6 +913,7 @@ def _styles(formatting: dict[str, Any], hints: dict[str, Any] | None = None):
             spaceBefore=_twips_to_pt(formatting["body_space_before"]),
             spaceAfter=_twips_to_pt(formatting["body_space_after"]),
             leftIndent=float(formatting["list_left_indent_pt"]),
+            firstLineIndent=float(formatting["list_first_line_indent_pt"] or 0.0),
             alignment=_reportlab_alignment(formatting["body_alignment"]),
         ),
     }
@@ -870,23 +957,28 @@ def build_pdf(
 
     flow = []
     if split_requested:
+        cover_summary_text = str(formatting.get("cover_summary_text") or "").strip()
+        preview = cover_summary_text or _cover_page_summary(rules)
+
         flow.extend(
             [
                 Paragraph(_escape(title), s["title"]),
-                Paragraph("Generated by DocuForge AI", s["subtitle"]),
             ]
         )
-        preview = _cover_page_summary(rules)
-        if not formatting["has_prelim_section"] and preview:
-            flow.append(Paragraph(_escape(preview), s["cover_summary"]))
+        if not cover_summary_text:
+            flow.append(Paragraph("Generated by DocuForge AI", s["subtitle"]))
+        if preview and (cover_summary_text or not formatting["has_prelim_section"]):
+            for summary_line in _cover_summary_lines(preview):
+                flow.append(Paragraph(_escape(summary_line), s["cover_summary"]))
             flow.append(PageBreak())
         elif not formatting["has_prelim_section"]:
             flow.append(PageBreak())
         elif formatting["has_prelim_section"]:
             flow.append(PageBreak())
             flow.append(Paragraph(_escape("Preliminary"), s["title"]))
-            if preview:
-                flow.append(Paragraph(_escape(preview), s["cover_summary"]))
+            if preview and not cover_summary_text:
+                for summary_line in _cover_summary_lines(preview):
+                    flow.append(Paragraph(_escape(summary_line), s["cover_summary"]))
             flow.append(PageBreak())
     else:
         flow.extend(
@@ -968,11 +1060,15 @@ def build_pdf(
         if kind == "oli":
             bullet = doc.add_paragraph(val, style="List Bullet")
             bullet.paragraph_format.left_indent = Pt(float(formatting["list_left_indent_pt"]))
+            if formatting.get("list_first_line_indent_pt") is not None:
+                bullet.paragraph_format.first_line_indent = Pt(float(formatting["list_first_line_indent_pt"]))
             bullet.paragraph_format.space_before = Pt(_twips_to_pt(formatting["body_space_before"]))
             bullet.paragraph_format.space_after = Pt(_twips_to_pt(formatting["body_space_after"]))
             pending_olist.append(ListItem(Paragraph(_escape(val), s["oli"])))
             ordered = doc.add_paragraph(val, style="List Number")
             ordered.paragraph_format.left_indent = Pt(float(formatting["list_left_indent_pt"]))
+            if formatting.get("list_first_line_indent_pt") is not None:
+                ordered.paragraph_format.first_line_indent = Pt(float(formatting["list_first_line_indent_pt"]))
             ordered.paragraph_format.space_before = Pt(_twips_to_pt(formatting["body_space_before"]))
             ordered.paragraph_format.space_after = Pt(_twips_to_pt(formatting["body_space_after"]))
         flush_list()

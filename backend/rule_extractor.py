@@ -10,9 +10,14 @@ import io
 import json
 import re
 import zipfile
+from collections import Counter
 from pathlib import Path
+from statistics import median
 from typing import Any
 from xml.etree import ElementTree as ET
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # Namespace map for Word XML
 NS = {
@@ -42,6 +47,18 @@ NEUTRAL_DEFAULTS = {
     "body_space_after": None,
     "body_alignment": None,  # "left", "both", "center", "right"
     "body_first_line_indent_dxa": None,
+    "body_left_indent_dxa": None,
+    "body_right_indent_dxa": None,
+
+    # COVER TYPOGRAPHY
+    "cover_title_size_pt": None,
+    "cover_subtitle_size_pt": None,
+    "cover_title_text": None,
+    "cover_summary_text": None,
+
+    # LIST TYPOGRAPHY
+    "list_left_indent_pt": None,
+    "list_first_line_indent_pt": None,
 
     # HEADINGS (level 1-6)
     "headings": {},
@@ -99,6 +116,363 @@ NEUTRAL_DEFAULTS = {
 }
 
 
+def _normalize_name(value: str | None) -> str:
+    return re.sub(r"\s+", "", str(value or "")).lower()
+
+
+def _find_style(styles_tree: ET.Element | None, style_names: set[str]) -> ET.Element | None:
+    if styles_tree is None:
+        return None
+
+    wanted = {_normalize_name(name) for name in style_names}
+    for style in styles_tree.findall(".//w:style", NS):
+        style_id = _normalize_name(style.get(f"{{{NS['w']}}}styleId"))
+        name_node = style.find("w:name", NS)
+        style_name = _normalize_name(name_node.get(f"{{{NS['w']}}}val") if name_node is not None else None)
+        if style_id in wanted or style_name in wanted:
+            return style
+    return None
+
+
+def _median_or_none(values: list[float | int | None]) -> float | None:
+    cleaned = [float(value) for value in values if value is not None]
+    if not cleaned:
+        return None
+    return float(median(cleaned))
+
+
+def _median_int(values: list[float | int | None]) -> int | None:
+    value = _median_or_none(values)
+    if value is None:
+        return None
+    return int(round(value))
+
+
+def _length_pt(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value.pt)
+    except Exception:
+        return None
+
+
+def _pt_to_dxa(value: float | int | None) -> int | None:
+    if value is None:
+        return None
+    return int(round(float(value) * 20.0))
+
+
+def _line_spacing_to_twips(paragraph: Any) -> int | None:
+    spacing = getattr(getattr(paragraph, "paragraph_format", None), "line_spacing", None)
+    if spacing is None:
+        return None
+
+    spacing_pt = _length_pt(spacing)
+    if spacing_pt is not None:
+        return int(round(spacing_pt * 20.0))
+
+    try:
+        numeric = float(spacing)
+    except Exception:
+        return None
+
+    if numeric <= 10.0:
+        return int(round(numeric * 240.0))
+    return int(round(numeric))
+
+
+def _alignment_label(alignment: Any) -> str | None:
+    if alignment == WD_ALIGN_PARAGRAPH.LEFT:
+        return "left"
+    if alignment == WD_ALIGN_PARAGRAPH.CENTER:
+        return "center"
+    if alignment == WD_ALIGN_PARAGRAPH.RIGHT:
+        return "right"
+    if alignment == WD_ALIGN_PARAGRAPH.JUSTIFY:
+        return "both"
+    return None
+
+
+def _extract_cover_title_text(doc_tree: ET.Element | None) -> str | None:
+    if doc_tree is None:
+        return None
+
+    for paragraph in doc_tree.findall('.//w:p', NS):
+        text = ''.join(node.text or '' for node in paragraph.findall('.//w:t', NS)).strip()
+        lowered = text.lower()
+        if 'project report titled' not in lowered or 'bonafide' not in lowered:
+            continue
+
+        match = re.search(r'project report titled\s*(.+?)\s*is\s+the\s+bonafide', text, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+
+        title = match.group(1)
+        title = title.replace('�', ' ').replace('\u2013', ' ').replace('\u2014', ' ')
+        title = re.sub(r'\s+', ' ', title).strip(" \t\r\n'\"-–—")
+        if title:
+            return title
+
+    return None
+
+
+def _extract_cover_summary_text(document: Document) -> str | None:
+    lines: list[str] = []
+    month_year_pattern = re.compile(r'\b(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+\d{4}\b', re.IGNORECASE)
+    for paragraph in document.paragraphs:
+        text = (getattr(paragraph, "text", "") or "").strip()
+        if not text:
+            continue
+
+        lowered = text.lower()
+        if "project report titled" in lowered or "bonafide certificate" in lowered or lowered.startswith("declaration") or lowered.startswith("acknowledgement"):
+            break
+
+        if text in {"BONAFIDE CERTIFICATE", "DECLARATION", "ACKNOWLEDGEMENT"}:
+            break
+
+        lines.append(text)
+        if month_year_pattern.search(text):
+            break
+
+    summary = "\n".join(lines).strip()
+    return summary or None
+
+
+def _paragraph_metric_summary(document: Document, style_names: set[str], min_text_length: int = 0) -> dict[str, Any]:
+    wanted = {_normalize_name(name) for name in style_names}
+    alignments: list[str] = []
+    left_indents: list[float] = []
+    right_indents: list[float] = []
+    first_line_indents: list[float] = []
+    space_before: list[float] = []
+    space_after: list[float] = []
+    line_spacing_vals: list[int] = []
+    count = 0
+
+    for paragraph in document.paragraphs:
+        text = getattr(paragraph, "text", "") or ""
+        clean_text = text.strip()
+        if not clean_text:
+            continue
+
+        style_name = _normalize_name(getattr(getattr(paragraph, "style", None), "name", None))
+        if style_name not in wanted:
+            continue
+
+        if len(clean_text) < min_text_length:
+            continue
+
+        count += 1
+        format_ = paragraph.paragraph_format
+
+        left = _length_pt(format_.left_indent)
+        right = _length_pt(format_.right_indent)
+        first = _length_pt(format_.first_line_indent)
+        before = _length_pt(format_.space_before)
+        after = _length_pt(format_.space_after)
+        line_spacing = _line_spacing_to_twips(paragraph)
+        alignment = _alignment_label(paragraph.alignment)
+
+        if left is not None:
+            left_indents.append(left)
+        if right is not None:
+            right_indents.append(right)
+        if first is not None:
+            first_line_indents.append(first)
+        if before is not None:
+            space_before.append(before)
+        if after is not None:
+            space_after.append(after)
+        if line_spacing is not None:
+            line_spacing_vals.append(line_spacing)
+        if alignment is not None:
+            alignments.append(alignment)
+
+    return {
+        "count": count,
+        "alignment": Counter(alignments).most_common(1)[0][0] if alignments else None,
+        "left_indent_pt": _median_or_none(left_indents),
+        "right_indent_pt": _median_or_none(right_indents),
+        "first_line_indent_pt": _median_or_none(first_line_indents),
+        "space_before_pt": _median_or_none(space_before),
+        "space_after_pt": _median_or_none(space_after),
+        "line_spacing_val": _median_int(line_spacing_vals),
+    }
+
+
+def _extract_document_metrics(document: Document, styles_tree: ET.Element | None, rules: dict[str, Any], warnings: list[str]) -> None:
+    try:
+        sections = list(document.sections)
+        if sections:
+            width_vals = [_pt_to_dxa(_length_pt(section.page_width)) for section in sections]
+            height_vals = [_pt_to_dxa(_length_pt(section.page_height)) for section in sections]
+            top_vals = [_pt_to_dxa(_length_pt(section.top_margin)) for section in sections]
+            bottom_vals = [_pt_to_dxa(_length_pt(section.bottom_margin)) for section in sections]
+            left_vals = [_pt_to_dxa(_length_pt(section.left_margin)) for section in sections]
+            right_vals = [_pt_to_dxa(_length_pt(section.right_margin)) for section in sections]
+            header_vals = [_pt_to_dxa(_length_pt(section.header_distance)) for section in sections]
+            footer_vals = [_pt_to_dxa(_length_pt(section.footer_distance)) for section in sections]
+
+            rules["section_count"] = len(sections)
+            rules["sections_have_different_margins"] = len({(top_vals[i], bottom_vals[i], left_vals[i], right_vals[i]) for i in range(len(sections))}) > 1
+
+            rules["page_width_dxa"] = _median_int(width_vals)
+            rules["page_height_dxa"] = _median_int(height_vals)
+            rules["margin_top_dxa"] = _median_int(top_vals)
+            rules["margin_bottom_dxa"] = _median_int(bottom_vals)
+            rules["margin_left_dxa"] = _median_int(left_vals)
+            rules["margin_right_dxa"] = _median_int(right_vals)
+            rules["margin_header_dxa"] = _median_int(header_vals)
+            rules["margin_footer_dxa"] = _median_int(footer_vals)
+
+            if len(sections) >= 3:
+                rules["has_cover_section"] = True
+
+        body_style = _find_style(styles_tree, {"BodyText"}) or _find_style(styles_tree, {"Normal"})
+        if body_style is not None:
+            body_rpr = body_style.find(".//w:rPr", NS)
+            body_sz = body_rpr.find("w:sz", NS) if body_rpr is not None else None
+            body_fonts = body_rpr.find("w:rFonts", NS) if body_rpr is not None else None
+            if body_fonts is not None:
+                body_font = body_fonts.get(f"{{{NS['w']}}}ascii") or body_fonts.get(f"{{{NS['w']}}}hAnsi")
+                if body_font:
+                    rules["body_font"] = body_font
+            if body_sz is not None:
+                size = body_sz.get(f"{{{NS['w']}}}val")
+                if size:
+                    rules["body_size_halfpt"] = int(size)
+
+        body_metrics = _paragraph_metric_summary(document, {"Body Text", "Normal"}, min_text_length=80)
+        if body_metrics["count"]:
+            if body_metrics["alignment"]:
+                rules["body_alignment"] = body_metrics["alignment"]
+            if body_metrics["line_spacing_val"] is not None:
+                rules["body_line_spacing_val"] = body_metrics["line_spacing_val"]
+                rules["body_line_spacing_rule"] = "auto"
+            if body_metrics["space_before_pt"] is not None:
+                rules["body_space_before"] = _pt_to_dxa(body_metrics["space_before_pt"])
+            rules["body_space_after"] = _pt_to_dxa(body_metrics["space_after_pt"] or 0)
+            if body_metrics["first_line_indent_pt"] is not None:
+                rules["body_first_line_indent_dxa"] = _pt_to_dxa(body_metrics["first_line_indent_pt"])
+            if body_metrics["left_indent_pt"] is not None:
+                rules["body_left_indent_dxa"] = _pt_to_dxa(body_metrics["left_indent_pt"])
+            if body_metrics["right_indent_pt"] is not None:
+                rules["body_right_indent_dxa"] = _pt_to_dxa(body_metrics["right_indent_pt"])
+
+        for level in range(1, 4):
+            metrics = _paragraph_metric_summary(document, {f"Heading {level}"})
+            if not metrics["count"]:
+                continue
+            if metrics["alignment"]:
+                rules[f"h{level}_alignment"] = metrics["alignment"]
+            if metrics["space_before_pt"] is not None:
+                rules[f"h{level}_space_before"] = _pt_to_dxa(metrics["space_before_pt"])
+            rules[f"h{level}_space_after"] = _pt_to_dxa(metrics["space_after_pt"] or 0)
+            if metrics["left_indent_pt"] is not None:
+                rules[f"h{level}_left_indent_dxa"] = _pt_to_dxa(metrics["left_indent_pt"])
+            if metrics["right_indent_pt"] is not None:
+                rules[f"h{level}_right_indent_dxa"] = _pt_to_dxa(metrics["right_indent_pt"])
+            if metrics["first_line_indent_pt"] is not None:
+                rules[f"h{level}_first_line_indent_dxa"] = _pt_to_dxa(metrics["first_line_indent_pt"])
+
+        list_metrics = _paragraph_metric_summary(document, {"List Paragraph"})
+        if list_metrics["count"]:
+            if list_metrics["left_indent_pt"] is not None:
+                rules["list_left_indent_pt"] = list_metrics["left_indent_pt"]
+            if list_metrics["first_line_indent_pt"] is not None:
+                rules["list_first_line_indent_pt"] = list_metrics["first_line_indent_pt"]
+
+        cover_title_sizes: list[float] = []
+        cover_subtitle_sizes: list[float] = []
+        for paragraph in document.paragraphs[:30]:
+            text = (paragraph.text or "").strip()
+            if not text:
+                continue
+
+            run_sizes = [run.font.size.pt for run in paragraph.runs if run.text and run.text.strip() and run.font.size is not None]
+            if not run_sizes:
+                continue
+
+            if any(ch.isalpha() for ch in text) and text.upper() == text and not any(ch.isdigit() for ch in text):
+                cover_title_sizes.append(_median_or_none(run_sizes) or 0.0)
+
+            lower_text = text.lower()
+            if "submitted by" in lower_text or "partial fulfillment" in lower_text or any(run.italic for run in paragraph.runs if run.text and run.text.strip()):
+                cover_subtitle_sizes.append(_median_or_none(run_sizes) or 0.0)
+
+        if cover_title_sizes:
+            rules["cover_title_size_pt"] = _median_or_none(cover_title_sizes)
+        if cover_subtitle_sizes:
+            rules["cover_subtitle_size_pt"] = _median_or_none(cover_subtitle_sizes)
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"Document metrics extraction failed: {exc}")
+
+
+def _extract_footer_metadata(docx_zip: zipfile.ZipFile, rules: dict[str, Any], warnings: list[str]) -> None:
+    footer_files = sorted(name for name in docx_zip.namelist() if re.fullmatch(r"word/footer\d+\.xml", name))
+    header_files = sorted(name for name in docx_zip.namelist() if re.fullmatch(r"word/header\d+\.xml", name))
+
+    rules["footer_count"] = len(footer_files)
+    rules["header_count"] = len(header_files)
+
+    footer_text_sample = None
+    page_number_alignments: list[str] = []
+    saw_roman_page_numbers = False
+    saw_decimal_page_numbers = False
+
+    for footer_name in footer_files:
+        try:
+            root = ET.fromstring(docx_zip.read(footer_name))
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"Footer parse failed for {footer_name}: {exc}")
+            continue
+
+        texts = [node.text.strip() for node in root.findall('.//w:t', NS) if node.text and node.text.strip()]
+        if footer_text_sample is None and texts:
+            footer_text_sample = " ".join(texts)
+
+        for paragraph in root.findall('.//w:p', NS):
+            jc = paragraph.find('w:pPr/w:jc', NS)
+            if jc is not None:
+                val = jc.get(f"{{{NS['w']}}}val")
+                if val:
+                    page_number_alignments.append(val)
+
+            for instr in paragraph.findall('.//w:instrText', NS):
+                instr_text = (instr.text or "").lower()
+                if "page" not in instr_text:
+                    continue
+
+                rules["has_page_numbers"] = True
+                if "roman" in instr_text:
+                    saw_roman_page_numbers = True
+                    if "upper" in instr_text:
+                        rules["prelim_page_format"] = "upperRoman"
+                    else:
+                        rules["prelim_page_format"] = "lowerRoman"
+                else:
+                    saw_decimal_page_numbers = True
+                    rules["body_page_format"] = "decimal"
+
+    if footer_text_sample is not None:
+        rules["footer_text_sample"] = footer_text_sample
+
+    if page_number_alignments:
+        rules["page_number_alignment"] = Counter(page_number_alignments).most_common(1)[0][0]
+
+    if saw_roman_page_numbers or saw_decimal_page_numbers:
+        rules["has_page_numbers"] = True
+        rules["footer_has_page_number"] = True
+    if saw_roman_page_numbers:
+        rules["has_prelim_section"] = True
+    if saw_decimal_page_numbers:
+        rules["has_body_section"] = True
+    if saw_roman_page_numbers and saw_decimal_page_numbers:
+        rules["page_number_section_restart"] = True
+
+
 def extract_rules(docx_bytes: bytes, source_filename: str = "") -> dict[str, Any]:
     """
     Extract all formatting rules from DOCX.
@@ -119,6 +493,12 @@ def extract_rules(docx_bytes: bytes, source_filename: str = "") -> dict[str, Any
             # Read main document
             doc_xml = docx_zip.read("word/document.xml").decode("utf-8")
             doc_tree = ET.fromstring(doc_xml)
+
+            document = None
+            try:
+                document = Document(io.BytesIO(docx_bytes))
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"python-docx parsing failed: {exc}")
 
             # Read styles
             try:
@@ -155,6 +535,18 @@ def extract_rules(docx_bytes: bytes, source_filename: str = "") -> dict[str, Any
 
             # Extract headers/footers
             _extract_headers_footers(docx_zip, doc_tree, rules, warnings)
+
+            cover_title_text = _extract_cover_title_text(doc_tree)
+            if cover_title_text:
+                rules["cover_title_text"] = cover_title_text
+
+            cover_summary_text = _extract_cover_summary_text(document) if document is not None else None
+            if cover_summary_text:
+                rules["cover_summary_text"] = cover_summary_text
+
+            if document is not None:
+                _extract_document_metrics(document, styles_tree, rules, warnings)
+                _extract_footer_metadata(docx_zip, rules, warnings)
 
             # Quality checks
             _check_quality_flags(doc_tree, rules, warnings)
