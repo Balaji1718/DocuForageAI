@@ -55,13 +55,17 @@ if ($InstallDeps) {
   Write-Host "Skipping pip install (use -InstallDeps to install requirements)." -ForegroundColor Yellow
 }
 
-$portOwner = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($portOwner) {
+$portListener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($portListener) {
+  if ($portListener.OwningProcess -le 0) {
+    throw "Port $Port is already in use by the system (PID 0). Re-run with a different -Port."
+  }
+
   if ($ForceRestart) {
-    Write-Host "Port $Port is in use by PID $($portOwner.OwningProcess). Stopping process..." -ForegroundColor Yellow
-    Stop-Process -Id $portOwner.OwningProcess -Force
+    Write-Host "Port $Port is in use by PID $($portListener.OwningProcess). Stopping process..." -ForegroundColor Yellow
+    Stop-Process -Id $portListener.OwningProcess -Force
   } else {
-    throw "Port $Port is already in use by PID $($portOwner.OwningProcess). Re-run with -ForceRestart or choose another -Port."
+    throw "Port $Port is already in use by PID $($portListener.OwningProcess). Re-run with -ForceRestart or choose another -Port."
   }
 }
 

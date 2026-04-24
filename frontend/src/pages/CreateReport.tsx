@@ -5,6 +5,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
@@ -862,78 +864,6 @@ export default function CreateReport() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="rules">Formatting Rules</Label>
-              <Textarea
-                id="rules"
-                required
-                rows={5}
-                value={rules}
-                onChange={(e) => setRules(e.target.value)}
-                placeholder="Describe sections, tone, citation style, formatting requirements…"
-              />
-            </div>
-
-            <div className="space-y-3 rounded-md border border-border/60 bg-secondary/20 p-4">
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-sm">Document Metadata</h3>
-                <span className="text-xs text-muted-foreground">(key/value fields that appear on the cover page)</span>
-              </div>
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {metadataFields.map((field, index) => (
-                  <div key={field.id} className="grid gap-2 rounded-md border border-border/40 bg-background/60 p-3 md:grid-cols-[1fr_1.5fr_auto] md:items-end">
-                    <div className="space-y-2">
-                      <Label htmlFor={`metadata-key-${field.id}`}>Field name</Label>
-                      <Input
-                        id={`metadata-key-${field.id}`}
-                        value={field.key}
-                        onChange={(e) => updateMetadataField(field.id, { key: e.target.value })}
-                        placeholder={index === 0 ? "author" : "custom_field"}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`metadata-value-${field.id}`}>Value</Label>
-                      <Input
-                        id={`metadata-value-${field.id}`}
-                        value={field.value}
-                        onChange={(e) => updateMetadataField(field.id, { value: e.target.value })}
-                        placeholder={index === 0 ? "John Smith" : "Enter metadata value"}
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeMetadataField(field.id)}
-                      className="h-9 w-full md:w-auto"
-                      disabled={metadataFields.length <= 1}
-                    >
-                      <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={addMetadataField} className="h-8">
-                  <Plus className="mr-1 h-3 w-3" /> Add Metadata Field
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  Use any field names you need. Empty field names are skipped during submission.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="reference">Optional Reference Content</Label>
-              <Textarea
-                id="reference"
-                rows={5}
-                value={referenceContent}
-                onChange={(e) => setReferenceContent(e.target.value)}
-                placeholder="Optional: paste a sample structure you want to mimic (organization only, not wording)."
-              />
-            </div>
-
             <div className="space-y-3 rounded-md border border-border/60 p-4">
               <div className="space-y-2">
                 <Label htmlFor="styleReference">Reference DOCX for Style Extraction (optional)</Label>
@@ -993,6 +923,80 @@ export default function CreateReport() {
               ) : null}
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="rules">Formatting Rules</Label>
+              <Textarea
+                id="rules"
+                required
+                rows={5}
+                value={rules}
+                onChange={(e) => setRules(e.target.value)}
+                placeholder="Describe sections, tone, citation style, formatting requirements…"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reference">Optional Reference Content</Label>
+              <Textarea
+                id="reference"
+                rows={5}
+                value={referenceContent}
+                onChange={(e) => setReferenceContent(e.target.value)}
+                placeholder="Optional: paste a sample structure you want to mimic (organization only, not wording)."
+              />
+            </div>
+
+            <div className="space-y-3 rounded-md border border-border/60 bg-secondary/20 p-4">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm">Document Metadata</h3>
+                <span className="text-xs text-muted-foreground">(key/value fields that appear on the cover page)</span>
+              </div>
+              <ScrollArea className="h-72 rounded-md border border-border/40 bg-background/60">
+                <div className="space-y-2 p-3 pr-4">
+                  {metadataFields.map((field, index) => (
+                    <div key={field.id} className="grid gap-2 rounded-md border border-border/40 bg-background/70 p-3 md:grid-cols-[1fr_1.5fr_auto] md:items-end">
+                      <div className="space-y-2">
+                        <Label htmlFor={`metadata-key-${field.id}`}>Field name</Label>
+                        <Input
+                          id={`metadata-key-${field.id}`}
+                          value={field.key}
+                          onChange={(e) => updateMetadataField(field.id, { key: e.target.value })}
+                          placeholder={index === 0 ? "author" : "custom_field"}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`metadata-value-${field.id}`}>Value</Label>
+                        <Input
+                          id={`metadata-value-${field.id}`}
+                          value={field.value}
+                          onChange={(e) => updateMetadataField(field.id, { value: e.target.value })}
+                          placeholder={index === 0 ? "John Smith" : "Enter metadata value"}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeMetadataField(field.id)}
+                        className="h-9 w-full md:w-auto"
+                        disabled={metadataFields.length <= 1}
+                      >
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={addMetadataField} className="h-8">
+                  <Plus className="mr-1 h-3 w-3" /> Add Metadata Field
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Use any field names you need. Empty field names are skipped during submission.
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-3 rounded-md border border-border/60 bg-secondary/20 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1009,62 +1013,68 @@ export default function CreateReport() {
                   <Plus className="mr-1 h-3 w-3" /> Add Section
                 </Button>
               </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {sections.map((section, idx) => (
-                  <div key={section.id} className="flex gap-2 items-center p-2 rounded bg-background border border-border/40">
-                    <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                    <Input
-                      type="text"
-                      value={section.title}
-                      onChange={(e) => updateSection(section.id, { title: e.target.value })}
-                      placeholder="Section title"
-                      className="flex-1 h-8"
-                    />
-                    <select
-                      value={section.mode}
-                      onChange={(e) =>
-                        updateSection(section.id, {
-                          mode: e.target.value as DocumentSection["mode"],
-                        })
-                      }
-                      className="h-8 px-2 rounded border border-input text-sm"
-                    >
-                      <option value="auto_generate">AI Generate</option>
-                      <option value="user_provides">User Content</option>
-                      <option value="skip">Skip</option>
-                    </select>
-                    <div className="flex gap-1 flex-shrink-0">
+              <ScrollArea className="h-64 rounded-md border border-border/40 bg-background/60">
+                <div className="space-y-2 p-2 pr-3">
+                  {sections.map((section, idx) => (
+                    <div key={section.id} className="flex items-center gap-2 rounded bg-background p-2 border border-border/40">
+                      <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        value={section.title}
+                        onChange={(e) => updateSection(section.id, { title: e.target.value })}
+                        placeholder="Section title"
+                        className="h-8 flex-1"
+                      />
+                      <Select
+                        value={section.mode}
+                        onValueChange={(value) =>
+                          updateSection(section.id, {
+                            mode: value as DocumentSection["mode"],
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[11rem] flex-shrink-0 text-xs sm:w-[12rem]">
+                          <SelectValue placeholder="Choose mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto_generate">AI Generate</SelectItem>
+                          <SelectItem value="user_provides">User Content</SelectItem>
+                          <SelectItem value="skip">Skip</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="flex flex-shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => moveSection(section.id, "up")}
+                          disabled={idx === 0}
+                          className="rounded p-1 hover:bg-secondary disabled:opacity-30"
+                          title="Move up"
+                        >
+                          <ChevronUp className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveSection(section.id, "down")}
+                          disabled={idx === sections.length - 1}
+                          className="rounded p-1 hover:bg-secondary disabled:opacity-30"
+                          title="Move down"
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </button>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => moveSection(section.id, "up")}
-                        disabled={idx === 0}
-                        className="p-1 rounded hover:bg-secondary disabled:opacity-30"
-                        title="Move up"
+                        onClick={() => removeSection(section.id)}
+                        disabled={sections.length <= 1}
+                        className="flex-shrink-0 rounded p-1 text-destructive hover:bg-destructive/10 disabled:opacity-30"
+                        title="Delete section"
                       >
-                        <ChevronUp className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveSection(section.id, "down")}
-                        disabled={idx === sections.length - 1}
-                        className="p-1 rounded hover:bg-secondary disabled:opacity-30"
-                        title="Move down"
-                      >
-                        <ChevronDown className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeSection(section.id)}
-                      disabled={sections.length <= 1}
-                      className="p-1 rounded hover:bg-destructive/10 text-destructive disabled:opacity-30 flex-shrink-0"
-                      title="Delete section"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </ScrollArea>
               <p className="text-xs text-muted-foreground">
                 Sections define the document structure. "AI Generate" uses your content and rules. "User Content" expects you to provide text. "Skip" omits the section.
               </p>
@@ -1225,15 +1235,19 @@ export default function CreateReport() {
 
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>On import conflicts:</span>
-                        <select
+                        <Select
                           value={importConflictStrategy}
-                          onChange={(e) => setImportConflictStrategy(e.target.value as "overwrite" | "skip" | "rename")}
-                          className="h-7 rounded border border-input bg-background px-2"
+                          onValueChange={(value) => setImportConflictStrategy(value as "overwrite" | "skip" | "rename")}
                         >
-                          <option value="rename">Rename incoming</option>
-                          <option value="overwrite">Overwrite existing</option>
-                          <option value="skip">Skip incoming</option>
-                        </select>
+                          <SelectTrigger className="h-7 w-44 text-xs">
+                            <SelectValue placeholder="Choose conflict strategy" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="rename">Rename incoming</SelectItem>
+                            <SelectItem value="overwrite">Overwrite existing</SelectItem>
+                            <SelectItem value="skip">Skip incoming</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">

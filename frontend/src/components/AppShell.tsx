@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { FileText, LogOut, UserRound } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -22,6 +23,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           </Link>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button variant="ghost" size="icon" onClick={() => navigate("/settings")} aria-label="Profile">
               <UserRound className="h-4 w-4" />
             </Button>

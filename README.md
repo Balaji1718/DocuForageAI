@@ -115,6 +115,13 @@ This will:
 
 If port 8006 is already in use, rerun with `-ForceRestart` or choose another port.
 
+If you want to skip the PowerShell wrapper, activate the backend venv and run the backend entrypoint directly:
+
+```powershell
+cd backend
+python main.py --port 8006
+```
+
 ### Manual run
 
 If you prefer to start each part yourself:

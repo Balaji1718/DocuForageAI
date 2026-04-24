@@ -8,8 +8,11 @@ Endpoints:
 """
 from __future__ import annotations
 
+import argparse
 import os
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -80,6 +83,29 @@ def _frontend_index_or_404() -> FileResponse:
     return FileResponse(FRONTEND_INDEX_FILE)
 
 
+def _ensure_frontend_build() -> None:
+    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    if not frontend_dir.exists():
+        raise RuntimeError(f"Frontend directory not found at {frontend_dir}")
+
+    npm_executable = shutil.which("npm")
+    if not npm_executable:
+        raise RuntimeError("npm is required to build the frontend automatically.")
+
+    node_modules_dir = frontend_dir / "node_modules"
+    if not node_modules_dir.exists():
+        log.info("Installing frontend dependencies in %s", frontend_dir)
+        subprocess.run([npm_executable, "install"], cwd=frontend_dir, check=True)
+
+    log.info("Building frontend in %s", frontend_dir)
+    subprocess.run([npm_executable, "run", "build"], cwd=frontend_dir, check=True)
+
+    if not FRONTEND_INDEX_FILE.exists():
+        raise RuntimeError(
+                        f"Frontend build completed but {FRONTEND_INDEX_FILE} is still missing."
+        )
+
+
 app.include_router(
     create_report_router(
         db=db,
@@ -118,3 +144,20 @@ def frontend_fallback(full_path: str):
         return FileResponse(candidate)
 
     return _frontend_index_or_404()
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser(description="Start DocuForge AI as a single server.")
+    parser.add_argument("--host", default=os.getenv("HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000")))
+    args = parser.parse_args()
+
+    _ensure_frontend_build()
+
+    import uvicorn
+
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    _main()

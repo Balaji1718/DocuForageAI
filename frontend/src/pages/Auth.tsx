@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
 import { FileText, Sparkles } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function Auth() {
   const { signIn, signUp } = useAuth();
@@ -37,6 +38,10 @@ export default function Auth() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background">
+      <div className="absolute right-4 top-4 z-20">
+        <ThemeToggle />
+      </div>
+
       <div className="absolute inset-0 -z-10 opacity-30">
         <div className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-primary blur-3xl" />
         <div className="absolute right-0 top-1/2 h-80 w-80 rounded-full bg-accent blur-3xl" />

@@ -62,6 +62,12 @@ FastAPI will serve:
 - frontend static files from `../dist`
 - SPA routes via fallback to `dist/index.html`
 
+If you want a single command that rebuilds the frontend and then starts FastAPI, run:
+
+```bash
+python main.py --host 0.0.0.0 --port 8000
+```
+
 Optional:
 - set `FRONTEND_DIST_DIR` if your built frontend path is not `../dist`
 
