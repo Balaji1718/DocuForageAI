@@ -68,6 +68,8 @@ If you want a single command that rebuilds the frontend and then starts FastAPI,
 python main.py --host 0.0.0.0 --port 8000
 ```
 
+The backend entrypoint now skips the frontend install/build step when the existing `dist/` output is already newer than the frontend sources.
+
 Optional:
 - set `FRONTEND_DIST_DIR` if your built frontend path is not `../dist`
 

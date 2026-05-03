@@ -71,6 +71,57 @@ FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
 
 MAX_CONTENT_CHARS = int(os.getenv("MAX_CONTENT_CHARS", "300000"))  # higher ceiling for long-form reports
 
+
+def _frontend_source_files(frontend_dir: Path) -> list[Path]:
+    tracked_files = [
+        frontend_dir / "package.json",
+        frontend_dir / "package-lock.json",
+        frontend_dir / "bun.lock",
+        frontend_dir / "bun.lockb",
+        frontend_dir / "vite.config.ts",
+        frontend_dir / "vite.config.js",
+        frontend_dir / "vite.config.mjs",
+        frontend_dir / "index.html",
+        frontend_dir / "components.json",
+        frontend_dir / "postcss.config.js",
+        frontend_dir / "postcss.config.cjs",
+        frontend_dir / "postcss.config.ts",
+        frontend_dir / "tailwind.config.ts",
+        frontend_dir / "tailwind.config.js",
+        frontend_dir / "tailwind.config.cjs",
+        frontend_dir / "eslint.config.js",
+        frontend_dir / "eslint.config.mjs",
+        frontend_dir / "tsconfig.json",
+        frontend_dir / "tsconfig.app.json",
+        frontend_dir / "tsconfig.node.json",
+    ]
+
+    for relative_dir in ("src", "public"):
+        source_root = frontend_dir / relative_dir
+        if source_root.exists():
+            tracked_files.extend(path for path in source_root.rglob("*") if path.is_file())
+
+    return [path for path in tracked_files if path.exists()]
+
+
+def _latest_mtime(paths: list[Path]) -> float:
+    latest = 0.0
+    for path in paths:
+        latest = max(latest, path.stat().st_mtime)
+    return latest
+
+
+def _frontend_build_is_current(frontend_dir: Path) -> bool:
+    if not FRONTEND_INDEX_FILE.exists() or not FRONTEND_DIST_DIR.exists():
+        return False
+
+    source_files = _frontend_source_files(frontend_dir)
+    dist_files = [path for path in FRONTEND_DIST_DIR.rglob("*") if path.is_file()]
+    if not source_files or not dist_files:
+        return False
+
+    return _latest_mtime(dist_files) >= _latest_mtime(source_files)
+
 def _frontend_index_or_404() -> FileResponse:
     if not FRONTEND_INDEX_FILE.exists():
         raise HTTPException(
@@ -87,6 +138,10 @@ def _ensure_frontend_build() -> None:
     frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
     if not frontend_dir.exists():
         raise RuntimeError(f"Frontend directory not found at {frontend_dir}")
+
+    if _frontend_build_is_current(frontend_dir):
+        log.info("Frontend build is current; skipping npm install and npm run build.")
+        return
 
     npm_executable = shutil.which("npm")
     if not npm_executable:

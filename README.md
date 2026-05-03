@@ -100,27 +100,21 @@ If you want to run the React app separately during development, set `VITE_API_BA
 
 ### Recommended single-server mode
 
-From the repo root, run:
-
-```powershell
-.\run-single-server.ps1 -Port 8006 -InstallDeps
-```
-
-This will:
-
-- build the frontend
-- install backend requirements if needed
-- start FastAPI on `http://localhost:8006`
-- serve both the API and the frontend from one local URL
-
-If port 8006 is already in use, rerun with `-ForceRestart` or choose another port.
-
-If you want to skip the PowerShell wrapper, activate the backend venv and run the backend entrypoint directly:
+After the one-time environment setup, run:
 
 ```powershell
 cd backend
 python main.py --port 8006
 ```
+
+This will:
+
+- start FastAPI on `http://localhost:8006`
+- serve both the API and the frontend from one local URL
+- rebuild the frontend only when the source files are newer than `dist/`
+- install frontend dependencies only if they are missing and a rebuild is required
+
+If the frontend build is missing or stale, the backend entrypoint handles the rebuild automatically.
 
 ### Manual run
 
